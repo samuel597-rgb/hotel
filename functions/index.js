@@ -14,6 +14,102 @@ const {
 admin.initializeApp();
 const db = admin.firestore();
 
+// Custom password reset links are one-time tokens with a server-enforced
+// one-minute lifetime. Email delivery uses the Firebase Trigger Email
+// extension's configured Firestore collection (defaults to `mail`).
+const passwordResetTokens = db.collection('passwordResetTokens');
+const passwordResetAccounts = db.collection('passwordResetAccounts');
+const passwordResetRateLimits = db.collection('passwordResetRateLimits');
+const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
+
+exports.requestPasswordReset = functions.https.onCall(async (data, ctx) => {
+  const email = String(data.email || '').trim().toLowerCase();
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    return { ok: true };
+
+  const now = Date.now();
+  const rateRef = passwordResetRateLimits.doc(sha256(email));
+  const canRequest = await db.runTransaction(async transaction => {
+    const snapshot = await transaction.get(rateRef);
+    if (snapshot.exists && Number(snapshot.data().nextAllowedAt) > now) return false;
+    transaction.set(rateRef, { nextAllowedAt: now + 60_000, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    return true;
+  });
+  if (!canRequest) return { ok: true };
+
+  let user;
+  try { user = await admin.auth().getUserByEmail(email); }
+  catch (error) {
+    if (error.code === 'auth/user-not-found') return { ok: true };
+    console.error('Password reset account lookup failed:', error);
+    return { ok: true };
+  }
+
+  const token = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = sha256(token);
+  const expiresAt = now + 60_000;
+  const accountRef = passwordResetAccounts.doc(user.uid);
+  await db.runTransaction(async transaction => {
+    transaction.set(passwordResetTokens.doc(tokenHash), {
+      uid: user.uid,
+      expiresAt,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    transaction.set(accountRef, { tokenHash, expiresAt });
+  });
+
+  const frontendUrl = String(process.env.FRONTEND_URL || 'https://hoteli-cd840.web.app').replace(/\/$/, '');
+  const resetUrl = `${frontendUrl}/reset-password.html?token=${encodeURIComponent(token)}`;
+  const greeting = String(user.displayName || 'there').replace(/[<>"'&]/g, '');
+  try {
+    await db.collection(process.env.RESET_EMAIL_COLLECTION || 'mail').add({
+      to: user.email,
+      message: {
+        subject: 'Reset your HOTELI POA password',
+        text: `Hello ${greeting},\n\nUse this link within one minute to reset your password:\n${resetUrl}\n\nIf you did not request this, ignore this email.`,
+        html: `<p>Hello ${greeting},</p><p><a href="${resetUrl}">Reset your password</a></p><p>This one-time link expires in one minute. If you did not request it, ignore this email.</p>`
+      }
+    });
+  } catch (error) {
+    console.error('Password reset email queue failed:', error);
+    await passwordResetTokens.doc(tokenHash).delete().catch(() => {});
+    await accountRef.delete().catch(() => {});
+  }
+  return { ok: true };
+});
+
+exports.completePasswordReset = functions.https.onCall(async (data) => {
+  const token = String(data.token || '');
+  const password = String(data.password || '');
+  if (!/^[A-Za-z0-9_-]{40,60}$/.test(token) || password.length < 8 || password.length > 128)
+    throw new functions.https.HttpsError('invalid-argument', 'The reset link or new password is invalid.');
+
+  const tokenHash = sha256(token);
+  const tokenRef = passwordResetTokens.doc(tokenHash);
+  const tokenData = await db.runTransaction(async transaction => {
+    const snapshot = await transaction.get(tokenRef);
+    if (!snapshot.exists || Number(snapshot.data().expiresAt) <= Date.now()) {
+      if (snapshot.exists) transaction.delete(tokenRef);
+      throw new functions.https.HttpsError('deadline-exceeded', 'This password reset link has expired. Request a new one.');
+    }
+    const entry = snapshot.data();
+    const accountRef = passwordResetAccounts.doc(entry.uid);
+    const accountSnapshot = await transaction.get(accountRef);
+    if (!accountSnapshot.exists || accountSnapshot.data().tokenHash !== tokenHash
+      || Number(accountSnapshot.data().expiresAt) <= Date.now()) {
+      transaction.delete(tokenRef);
+      throw new functions.https.HttpsError('deadline-exceeded', 'This password reset link has expired. Request a new one.');
+    }
+    transaction.delete(tokenRef);
+    transaction.delete(accountRef);
+    return entry;
+  });
+
+  await admin.auth().updateUser(tokenData.uid, { password });
+  await admin.auth().revokeRefreshTokens(tokenData.uid);
+  return { ok: true };
+});
+
 // ═══════════════════════════════════════════════
 //  ROLE MANAGEMENT
 // ═══════════════════════════════════════════════
@@ -407,15 +503,21 @@ async function consumePasskeyChallenge(challengeId, action, uid) {
 exports.webauthnChallenge = functions.https.onCall(async (data, ctx) => {
   const site = webauthnSite(ctx);
   if (data.action === 'register') {
-    if (!ctx.auth) throw new functions.https.HttpsError('unauthenticated', 'Sign in before registering a passkey.');
-    const user = await admin.auth().getUser(ctx.auth.uid);
-    const existing = await passkeyCredentials.where('uid', '==', user.uid).get();
+    const newAccount = data.createAccount === true;
+    if (!ctx.auth && !newAccount)
+      throw new functions.https.HttpsError('unauthenticated', 'Sign in before registering a passkey.');
+    if (ctx.auth && newAccount)
+      throw new functions.https.HttpsError('failed-precondition', 'Sign out before creating a passkey account.');
+    const user = ctx.auth ? await admin.auth().getUser(ctx.auth.uid) : null;
+    const uid = user?.uid || crypto.randomUUID();
+    const displayName = String(data.displayName || user?.displayName || user?.email || 'Hotel user').trim().slice(0, 80);
+    const existing = await passkeyCredentials.where('uid', '==', uid).get();
     const options = await generateRegistrationOptions({
       rpName: PASSKEY_RP_NAME,
       rpID: site.rpId,
-      userID: Buffer.from(user.uid),
-      userName: user.email || user.phoneNumber || user.uid,
-      userDisplayName: data.displayName || user.displayName || user.email || 'Hotel user',
+      userID: Buffer.from(uid),
+      userName: user?.email || user?.phoneNumber || `passkey-${uid}`,
+      userDisplayName: displayName,
       attestationType: 'none',
       timeout: 60000,
       authenticatorSelection: {
@@ -429,31 +531,34 @@ exports.webauthnChallenge = functions.https.onCall(async (data, ctx) => {
       }))
     });
     const challengeId = await savePasskeyChallenge({
-      uid: user.uid, action: 'register', challenge: options.challenge, ...site
+      uid, action: 'register', challenge: options.challenge, newAccount, displayName, ...site
     });
     return { ...options, challengeId, rpId: site.rpId, rpName: PASSKEY_RP_NAME };
   }
 
   if (data.action === 'authenticate') {
     const email = String(data.email || '').trim();
-    if (!email) throw new functions.https.HttpsError('invalid-argument', 'Enter your account email to use a passkey.');
-    let user;
-    try { user = await admin.auth().getUserByEmail(email); }
-    catch { throw new functions.https.HttpsError('failed-precondition', 'Passkey sign-in is unavailable for this account.'); }
-    const existing = await passkeyCredentials.where('uid', '==', user.uid).get();
-    if (existing.empty)
+    let uid;
+    if (email) {
+      let user;
+      try { user = await admin.auth().getUserByEmail(email); }
+      catch { throw new functions.https.HttpsError('failed-precondition', 'Passkey sign-in is unavailable for this account.'); }
+      uid = user.uid;
+    }
+    const existing = uid ? await passkeyCredentials.where('uid', '==', uid).get() : null;
+    if (existing?.empty)
       throw new functions.https.HttpsError('failed-precondition', 'Passkey sign-in is unavailable for this account.');
     const options = await generateAuthenticationOptions({
       rpID: site.rpId,
       timeout: 60000,
       userVerification: 'required',
-      allowCredentials: existing.docs.map(doc => ({
+      ...(existing ? { allowCredentials: existing.docs.map(doc => ({
         id: doc.data().credentialId,
         transports: doc.data().transports || []
-      }))
+      })) } : {})
     });
     const challengeId = await savePasskeyChallenge({
-      uid: user.uid, action: 'authenticate', challenge: options.challenge, ...site
+      ...(uid ? { uid } : {}), action: 'authenticate', challenge: options.challenge, ...site
     });
     return { ...options, challengeId, rpId: site.rpId };
   }
@@ -462,8 +567,11 @@ exports.webauthnChallenge = functions.https.onCall(async (data, ctx) => {
 });
 
 exports.webauthnRegister = functions.https.onCall(async (data, ctx) => {
-  if (!ctx.auth) throw new functions.https.HttpsError('unauthenticated', 'Sign in before registering a passkey.');
-  const challenge = await consumePasskeyChallenge(data.challengeId, 'register', ctx.auth.uid);
+  const challenge = await consumePasskeyChallenge(data.challengeId, 'register', ctx.auth?.uid);
+  if (challenge.newAccount !== true && !ctx.auth)
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before registering a passkey.');
+  if (challenge.newAccount === true && ctx.auth)
+    throw new functions.https.HttpsError('failed-precondition', 'Sign out before creating a passkey account.');
   const verification = await verifyRegistrationResponse({
     response: data.response,
     expectedChallenge: challenge.challenge,
@@ -476,12 +584,18 @@ exports.webauthnRegister = functions.https.onCall(async (data, ctx) => {
     throw new functions.https.HttpsError('permission-denied', 'Passkey registration could not be verified.');
 
   const credential = info.credential;
+  let account;
+  if (challenge.newAccount === true) {
+    account = await admin.auth().createUser({ uid: challenge.uid, displayName: challenge.displayName });
+  } else {
+    account = await admin.auth().getUser(ctx.auth.uid);
+  }
   const ref = passkeyCredentials.doc(credential.id);
   await db.runTransaction(async transaction => {
     const existing = await transaction.get(ref);
     if (existing.exists) throw new functions.https.HttpsError('already-exists', 'This passkey is already registered.');
     transaction.set(ref, {
-      uid: ctx.auth.uid,
+      uid: account.uid,
       credentialId: credential.id,
       publicKey: Buffer.from(credential.publicKey).toString('base64'),
       counter: credential.counter,
@@ -492,7 +606,13 @@ exports.webauthnRegister = functions.https.onCall(async (data, ctx) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
   });
-  return { ok: true, id: credential.id };
+  return {
+    ok: true,
+    id: credential.id,
+    ...(challenge.newAccount === true ? {
+      customToken: await admin.auth().createCustomToken(account.uid, account.customClaims || {})
+    } : {})
+  };
 });
 
 exports.webauthnVerify = functions.https.onCall(async (data, ctx) => {
@@ -502,10 +622,18 @@ exports.webauthnVerify = functions.https.onCall(async (data, ctx) => {
     throw new functions.https.HttpsError('invalid-argument', 'Passkey response is invalid.');
   const credentialRef = passkeyCredentials.doc(credentialId);
   const credentialSnapshot = await credentialRef.get();
-  if (!credentialSnapshot.exists || credentialSnapshot.data().uid !== challenge.uid)
+  if (!credentialSnapshot.exists || (challenge.uid && credentialSnapshot.data().uid !== challenge.uid))
     throw new functions.https.HttpsError('unauthenticated', 'Passkey could not be verified.');
 
   const stored = credentialSnapshot.data();
+  if (!challenge.uid) {
+    const encodedHandle = data.response?.response?.userHandle;
+    const userHandle = typeof encodedHandle === 'string'
+      ? Buffer.from(encodedHandle.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()
+      : '';
+    if (!userHandle || userHandle !== stored.uid)
+      throw new functions.https.HttpsError('unauthenticated', 'Passkey could not be verified.');
+  }
   const verification = await verifyAuthenticationResponse({
     response: data.response,
     expectedChallenge: challenge.challenge,

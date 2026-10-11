@@ -115,10 +115,9 @@ export async function registerPasskey(user, displayName = '') {
 
 export async function loginWithPasskey(email) {
   if (!passkeySupported()) throw new Error('Passkeys are not supported on this device.');
-  if (!email?.trim()) throw new Error('Enter your account email to use a passkey.');
 
   const challengeResult = await callable('webauthnChallenge')({
-    action: 'authenticate', email: email.trim()
+    action: 'authenticate', ...(email?.trim() ? { email: email.trim() } : {})
   });
   const { challengeId, ...options } = challengeResult.data;
   const assertion = await navigator.credentials.get({
@@ -150,6 +149,49 @@ export async function loginWithPasskey(email) {
   const credential = await signInWithCustomToken(auth, verification.data.customToken);
   toast('Signed in with passkey.', 'success');
   return credential.user;
+}
+
+export async function createPasskeyAccount(name) {
+  if (!passkeySupported()) throw new Error('Passkeys are not supported on this device.');
+  const displayName = String(name || '').trim().replace(/\s+/g, ' ');
+  if (displayName.split(' ').length < 2) throw new Error('Enter your first and last names.');
+
+  const challengeResult = await callable('webauthnChallenge')({
+    action: 'register', createAccount: true, displayName
+  });
+  const { challengeId, ...options } = challengeResult.data;
+  const credential = await navigator.credentials.create({
+    publicKey: {
+      ...options,
+      challenge: base64UrlToBytes(options.challenge),
+      user: { ...options.user, id: base64UrlToBytes(options.user.id) },
+      excludeCredentials: (options.excludeCredentials || []).map(item => ({
+        ...item, id: base64UrlToBytes(item.id)
+      }))
+    }
+  });
+  if (!credential) throw new Error('Passkey account creation was cancelled.');
+
+  const response = credential.response;
+  const result = await callable('webauthnRegister')({
+    challengeId,
+    createAccount: true,
+    name: displayName,
+    response: {
+      id: credential.id,
+      rawId: bufferToBase64Url(credential.rawId),
+      type: credential.type,
+      response: {
+        clientDataJSON: bufferToBase64Url(response.clientDataJSON),
+        attestationObject: bufferToBase64Url(response.attestationObject),
+        transports: response.getTransports ? response.getTransports() : []
+      }
+    }
+  });
+  if (!result.data.customToken) throw new Error('The passkey account was created, but sign-in did not complete.');
+  const credentialResult = await signInWithCustomToken(auth, result.data.customToken);
+  toast('Passkey account created.', 'success');
+  return credentialResult.user;
 }
 
 export async function listPasskeys(uid = auth.currentUser?.uid) {

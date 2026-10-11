@@ -20,6 +20,18 @@
     </section>
 
     <section class="p-7 sm:p-10 lg:p-12">
+      <div id="welcomeState">
+        <p class="text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">HOTELI POA</p>
+        <h2 class="mt-3 text-3xl font-bold text-[#0A2540]">Welcome</h2>
+        <p class="mt-2 text-slate-500">Sign in to order food and drinks or connect with our team.</p>
+        <button id="orderNow" type="button" class="mt-7 w-full rounded-lg bg-[#1E6FD9] py-3 font-semibold text-white hover:bg-blue-700">Order Now</button>
+        <button id="sendMessage" type="button" class="mt-3 w-full rounded-lg border border-slate-200 py-3 font-semibold text-[#0A2540]">Send Message</button>
+        <button id="showSignIn" type="button" class="mt-7 w-full rounded-lg bg-[#0A2540] py-3 font-semibold text-white">Sign In</button>
+        <button id="showCreate" type="button" class="mt-3 w-full py-2 text-sm text-blue-600">New here? Create an account</button>
+      </div>
+
+      <div id="authPanel" class="hidden">
+        <button id="backWelcome" type="button" class="mb-5 text-sm text-blue-600">← Back</button>
       <h2 id="title" class="text-2xl font-bold text-[#0A2540]">Welcome back</h2>
       <p id="subtitle" class="mb-6 mt-1 text-slate-500">Sign in to continue to your order.</p>
       <form id="emailForm" autocomplete="on" class="space-y-4">
@@ -37,20 +49,22 @@
       <div class="my-5 flex items-center gap-3 text-xs text-slate-400"><span class="h-px flex-1 bg-slate-200"></span><span>OR CONTINUE WITH</span><span class="h-px flex-1 bg-slate-200"></span></div>
       <div class="grid grid-cols-2 gap-3"><button id="google" type="button" class="rounded-lg border border-slate-200 py-3 font-medium">Google</button><button id="facebook" type="button" class="rounded-lg border border-slate-200 py-3 font-medium">Facebook</button></div>
       <button id="passkeyLogin" type="button" class="hidden mt-3 w-full rounded-lg border border-slate-200 py-3 font-medium">Sign in with fingerprint / passkey</button>
+      <button id="passkeyCreate" type="button" class="hidden mt-3 w-full rounded-lg border border-slate-200 py-3 font-medium">Create account with a passkey</button>
       <div class="mt-5 border-t border-slate-200 pt-4"><button id="phoneToggle" type="button" class="text-sm text-blue-600">Sign in with phone code</button><div id="phonePanel" class="hidden mt-3 space-y-3"><input id="phoneNumber" type="tel" autocomplete="tel" placeholder="+2547XXXXXXXX" class="w-full rounded-lg border border-slate-200 p-3" /><div id="recaptcha-container"></div><button id="sendCode" type="button" class="w-full rounded-lg border py-3">Send verification code</button><input id="smsCode" inputmode="numeric" autocomplete="one-time-code" placeholder="SMS verification code" class="hidden w-full rounded-lg border p-3" /><button id="verifyCode" type="button" class="hidden w-full rounded-lg bg-blue-600 py-3 text-white">Verify and sign in</button></div></div>
       <p class="mt-6 text-center text-xs text-slate-400">© 2026 HOTELI POA POS</p>
+      </div>
     </section>
   </main>
 
   <div id="forgotModal" class="hidden fixed inset-0 z-50 items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="forgotTitle">
     <section class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
       <h2 id="forgotTitle" class="text-xl font-bold text-[#0A2540]">Reset your password</h2>
-      <p class="mt-2 text-sm text-slate-500">Enter your email and we’ll send you a secure reset link.</p>
+      <p class="mt-2 text-sm text-slate-500">Enter your email and we’ll send a one-time link that expires in one minute.</p>
       <label for="forgotEmail" class="mt-5 block text-sm font-medium text-slate-700">Email</label>
       <input id="forgotEmail" type="email" autocomplete="email" class="mt-1 w-full rounded-xl border p-3" />
       <div class="mt-5 flex gap-3"><button id="forgotCancel" type="button" class="flex-1 rounded-xl border py-3">Cancel</button><button id="forgotSubmit" type="button" class="flex-1 rounded-xl bg-blue-600 py-3 font-semibold text-white">Send reset link</button></div>
     </section>
   </div>
-  <script type="module" src="/auth.js?v=auth-redirect-2"></script>
+  <script type="module" src="/auth.js?v=auth-redirect-3"></script>
 </body>
 </html>
