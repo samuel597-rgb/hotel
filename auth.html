@@ -1,89 +1,56 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Welcome to Firebase Hosting</title>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sign in · HOTELI POA</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-50 flex items-center justify-center p-4 sm:p-6">
+  <main class="grid w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-xl md:grid-cols-2">
+    <section class="flex flex-col justify-center bg-[#0A2540] p-8 text-white sm:p-10 lg:p-12">
+      <a href="/" class="mb-8 flex w-fit items-center gap-3 text-white no-underline">
+        <span class="grid h-12 w-12 place-items-center rounded-xl bg-[#1E6FD9] text-2xl font-bold">S</span>
+        <span class="text-2xl font-semibold">HOTELI POA</span>
+      </a>
+      <h1 class="text-3xl font-bold leading-tight">Manage sales, inventory and other transactions</h1>
+      <p class="mt-4 text-slate-300">Point of Sale for food, beverages and equipment.</p>
+      <div class="mt-9 flex gap-2" aria-hidden="true"><span class="h-2 w-6 rounded-full bg-[#1E6FD9]"></span><span class="h-2 w-2 rounded-full bg-slate-500"></span><span class="h-2 w-2 rounded-full bg-slate-500"></span></div>
+    </section>
 
-    <!-- update the version number as needed -->
-    <script defer src="/__/firebase/13.0.0/firebase-app-compat.js"></script>
-    <!-- include only the Firebase features as you need -->
-    <script defer src="/__/firebase/13.0.0/firebase-auth-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-database-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-firestore-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-functions-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-messaging-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-storage-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-analytics-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-remote-config-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-performance-compat.js"></script>
-    <!-- 
-      initialize the SDK after all desired features are loaded, set useEmulator to false
-      to avoid connecting the SDK to running emulators.
-    -->
-    <script defer src="/__/firebase/init.js?useEmulator=true"></script>
+    <section class="p-7 sm:p-10 lg:p-12">
+      <h2 id="title" class="text-2xl font-bold text-[#0A2540]">Welcome back</h2>
+      <p id="subtitle" class="mb-6 mt-1 text-slate-500">Sign in to continue to your order.</p>
+      <form id="emailForm" autocomplete="on" class="space-y-4">
+        <div id="nameFields" class="hidden space-y-3"><input id="fullName" autocomplete="name" placeholder="Your official first and last names" class="w-full rounded-lg border border-slate-200 p-3" /><input id="phone" autocomplete="tel" placeholder="Phone number (e.g. +2547…)" class="w-full rounded-lg border border-slate-200 p-3" /></div>
+        <label class="block text-sm font-medium text-slate-700" for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required placeholder="Email address" class="-mt-3 w-full rounded-lg border border-slate-200 p-3" />
+        <label class="block text-sm font-medium text-slate-700" for="password">Password</label>
+        <div class="relative -mt-3"><input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" placeholder="Password (at least 8 characters)" class="w-full rounded-lg border border-slate-200 p-3 pr-16" /><button id="togglePassword" type="button" class="absolute inset-y-0 right-3 text-lg text-blue-600" aria-label="Show password" aria-pressed="false">👁️</button></div>
+        <label class="flex items-center gap-2 text-sm text-slate-600"><input id="rememberMe" type="checkbox" class="accent-blue-600" /> Remember me</label>
+        <div class="flex items-center justify-between"><button id="forgot" type="button" class="text-sm text-blue-600">Forgot password?</button><button id="toggleCreate" type="button" class="text-sm text-slate-600"><span id="toggleText">New here? Create an account</span></button></div>
+        <button id="submitEmail" type="submit" class="w-full rounded-lg bg-[#1E6FD9] py-3 font-semibold text-white hover:bg-blue-700">Sign in</button>
+        <p id="status" aria-live="polite" class="text-sm"></p>
+      </form>
 
-    <style media="screen">
-      body { background: #ECEFF1; color: rgba(0,0,0,0.87); font-family: Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-      #message { background: white; max-width: 360px; margin: 100px auto 16px; padding: 32px 24px; border-radius: 3px; }
-      #message h2 { color: #ffa100; font-weight: bold; font-size: 16px; margin: 0 0 8px; }
-      #message h1 { font-size: 22px; font-weight: 300; color: rgba(0,0,0,0.6); margin: 0 0 16px;}
-      #message p { line-height: 140%; margin: 16px 0 24px; font-size: 14px; }
-      #message a { display: block; text-align: center; background: #039be5; text-transform: uppercase; text-decoration: none; color: white; padding: 16px; border-radius: 4px; }
-      #message, #message a { box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24); }
-      #load { color: rgba(0,0,0,0.4); text-align: center; font-size: 13px; }
-      @media (max-width: 600px) {
-        body, #message { margin-top: 0; background: white; box-shadow: none; }
-        body { border-top: 16px solid #ffa100; }
-      }
-    </style>
-  </head>
-  <body>
-    <div id="message">
-      <h2>Welcome</h2>
-      <h1>Firebase Hosting Setup Complete</h1>
-      <p>You're seeing this because you've successfully setup Firebase Hosting. Now it's time to go build something extraordinary!</p>
-      <a target="_blank" href="https://firebase.google.com/docs/hosting/">Open Hosting Documentation</a>
-    </div>
-    <p id="load">Firebase SDK Loading&hellip;</p>
+      <div class="my-5 flex items-center gap-3 text-xs text-slate-400"><span class="h-px flex-1 bg-slate-200"></span><span>OR CONTINUE WITH</span><span class="h-px flex-1 bg-slate-200"></span></div>
+      <div class="grid grid-cols-2 gap-3"><button id="google" type="button" class="rounded-lg border border-slate-200 py-3 font-medium">Google</button><button id="facebook" type="button" class="rounded-lg border border-slate-200 py-3 font-medium">Facebook</button></div>
+      <button id="passkeyLogin" type="button" class="hidden mt-3 w-full rounded-lg border border-slate-200 py-3 font-medium">Sign in with fingerprint / passkey</button>
+      <div class="mt-5 border-t border-slate-200 pt-4"><button id="phoneToggle" type="button" class="text-sm text-blue-600">Sign in with phone code</button><div id="phonePanel" class="hidden mt-3 space-y-3"><input id="phoneNumber" type="tel" autocomplete="tel" placeholder="+2547XXXXXXXX" class="w-full rounded-lg border border-slate-200 p-3" /><div id="recaptcha-container"></div><button id="sendCode" type="button" class="w-full rounded-lg border py-3">Send verification code</button><input id="smsCode" inputmode="numeric" autocomplete="one-time-code" placeholder="SMS verification code" class="hidden w-full rounded-lg border p-3" /><button id="verifyCode" type="button" class="hidden w-full rounded-lg bg-blue-600 py-3 text-white">Verify and sign in</button></div></div>
+      <p class="mt-6 text-center text-xs text-slate-400">© 2026 HOTELI POA POS</p>
+    </section>
+  </main>
 
-    <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        const loadEl = document.querySelector('#load');
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
-        // // The Firebase SDK is initialized and available here!
-        //
-        // firebase.auth().onAuthStateChanged(user => { });
-        // firebase.database().ref('/path/to/ref').on('value', snapshot => { });
-        // firebase.firestore().doc('/foo/bar').get().then(() => { });
-        // firebase.functions().httpsCallable('yourFunction')().then(() => { });
-        // firebase.messaging().requestPermission().then(() => { });
-        // firebase.storage().ref('/path/to/ref').getDownloadURL().then(() => { });
-        // firebase.analytics(); // call to activate
-        // firebase.analytics().logEvent('tutorial_completed');
-        // firebase.performance(); // call to activate
-        //
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
-
-        try {
-          let app = firebase.app();
-          let features = [
-            'auth', 
-            'database', 
-            'firestore',
-            'functions',
-            'messaging', 
-            'storage', 
-            'analytics', 
-            'remoteConfig',
-            'performance',
-          ].filter(feature => typeof app[feature] === 'function');
-          loadEl.textContent = `Firebase SDK loaded with ${features.join(', ')}`;
-        } catch (e) {
-          console.error(e);
-          loadEl.textContent = 'Error loading the Firebase SDK, check the console.';
-        }
-      });
-    </script>
-  </body>
+  <div id="forgotModal" class="hidden fixed inset-0 z-50 items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="forgotTitle">
+    <section class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+      <h2 id="forgotTitle" class="text-xl font-bold text-[#0A2540]">Reset your password</h2>
+      <p class="mt-2 text-sm text-slate-500">Enter your email and we’ll send you a secure reset link.</p>
+      <label for="forgotEmail" class="mt-5 block text-sm font-medium text-slate-700">Email</label>
+      <input id="forgotEmail" type="email" autocomplete="email" class="mt-1 w-full rounded-xl border p-3" />
+      <div class="mt-5 flex gap-3"><button id="forgotCancel" type="button" class="flex-1 rounded-xl border py-3">Cancel</button><button id="forgotSubmit" type="button" class="flex-1 rounded-xl bg-blue-600 py-3 font-semibold text-white">Send reset link</button></div>
+    </section>
+  </div>
+  <script type="module" src="/auth.js?v=auth-redirect-2"></script>
+</body>
 </html>
