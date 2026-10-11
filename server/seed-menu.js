@@ -5,8 +5,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const products = require('../menu.js');
 const supabaseUrl = process.env.SUPABASE_URL;
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!supabaseUrl || !serviceKey) throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the local environment first.');
+const serviceKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (!supabaseUrl || !serviceKey) throw new Error('Set SUPABASE_URL and SUPABASE_SECRET_KEY in the local environment first.');
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 const asId = name => String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 

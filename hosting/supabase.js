@@ -4,7 +4,7 @@ const response = await fetch('/runtime-config.json', { cache: 'no-store' });
 if (!response.ok) throw new Error('Could not load the Supabase runtime configuration.');
 const config = await response.json();
 if (!config.supabaseUrl || !config.supabaseAnonKey) {
-  throw new Error('Supabase is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY to the Render service environment.');
+  throw new Error('Supabase is not configured. Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to the Render service environment.');
 }
 
 export const apiBaseUrl = String(config.apiBaseUrl || '').replace(/\/$/, '');

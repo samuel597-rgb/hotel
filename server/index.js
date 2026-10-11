@@ -14,13 +14,16 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, '../hosting');
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 const allowedOrigins = new Set([
   'http://localhost:3000', 'http://localhost:5173',
   ...(process.env.CORS_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean),
   process.env.SITE_URL
 ].filter(Boolean));
-const service = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
-  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+const service = supabaseUrl && supabaseSecretKey
+  ? createClient(supabaseUrl, supabaseSecretKey, {
       auth: { persistSession: false, autoRefreshToken: false }
     })
   : null;
@@ -133,7 +136,7 @@ async function findUserByEmail(email) {
 }
 
 app.get('/health', (_req, res) => {
-  const configured = Boolean(service && process.env.SUPABASE_ANON_KEY);
+  const configured = Boolean(service && supabasePublishableKey);
   return res.status(configured ? 200 : 503).json({ status: configured ? 'ok' : 'configuration-required', timestamp: new Date().toISOString() });
 });
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: Boolean(service) }));
@@ -142,8 +145,8 @@ app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: Boolean
 app.get('/runtime-config.json', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({
-    supabaseUrl: process.env.SUPABASE_URL || '',
-    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
+    supabaseUrl: supabaseUrl || '',
+    supabaseAnonKey: supabasePublishableKey || '',
     apiBaseUrl: ''
   });
 });

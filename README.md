@@ -6,9 +6,9 @@ The POS frontend and API run together as a Node 22 web service on Render. Supaba
 
 1. In the Supabase SQL Editor, run `server/schema.sql`.
 2. In Supabase Authentication settings, enable Email, Google, Facebook, and Phone providers. Configure provider credentials, set the site URL, and allow `https://hoteli-pos-api.onrender.com/auth.html` as an OAuth redirect (also add the local URL when developing).
-3. In the Render Dashboard, create a Blueprint from this repository using `render.yaml`. Add the Supabase URL, anon key, service-role key, a random `RESET_CODE_PEPPER`, and Resend SMTP values as environment variables. Keep service-role and mail credentials in Render only.
-4. Set the GitHub Actions repository secrets `SUPABASE_URL` and `SUPABASE_ANON_KEY` for the daily Supabase keep-alive workflow. Add Stripe and Safaricom Daraja credentials in Render if card and M-Pesa checkout should be enabled. Point the Stripe webhook to `/api/stripe-webhook`.
-5. After the API is deployed, run `npm run seed` once with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in a local, ignored `.env` file. This installs the initial categories, menu, and general settings.
+3. In the Render Dashboard, create a Blueprint from this repository using `render.yaml`. Add `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, a random `RESET_CODE_PEPPER`, and Resend SMTP values as environment variables. Keep the secret key and mail credentials in Render only. The older `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` names remain supported by the server.
+4. Set the GitHub Actions repository secrets `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` for the daily Supabase keep-alive workflow. `SUPABASE_ANON_KEY` is also supported. Add Stripe and Safaricom Daraja credentials in Render if card and M-Pesa checkout should be enabled. Point the Stripe webhook to `/api/stripe-webhook`.
+5. After the API is deployed, run `npm run seed` once with `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in a local, ignored `.env` file. This installs the initial categories, menu, and general settings. The older `SUPABASE_SERVICE_ROLE_KEY` name is also supported.
 6. Promote staff accounts by setting their role in Supabase SQL, for example:
 
    ```sql
