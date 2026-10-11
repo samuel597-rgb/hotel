@@ -1,0 +1,12 @@
+# Express API
+PORT=3000
+CORS_ORIGINS=http://localhost:3000,https://YOUR_PROJECT_ID.web.app,https://YOUR_PROJECT_ID.firebaseapp.com
+POS_API_BASE_URL=
+
+# Firebase Admin credentials. Supply one method only.
+FIREBASE_SERVICE_ACCOUNT_PATH=./serviceAccountKey.json
+# On Render, store the entire JSON service account as a secret instead:
+# FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+
+# Use a persistent disk path on Render or another host with durable storage.
+SQLITE_PATH=./hoteli_poa.db

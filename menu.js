@@ -1,6 +1,6 @@
 'use strict';
 
-// HOTELI POA menu provided by the hotel; consumed by Firestore and SQLite seeding.
+// HOTELI POA menu; consumed by the Supabase catalog seed and local previews.
 module.exports = [
   {
     "name": "Beef Stew / Chips",

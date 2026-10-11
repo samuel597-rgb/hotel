@@ -1,2 +1,2 @@
-// Set POS_API_BASE_URL to the HTTPS URL of the deployed Express API.
+// API calls use the same Render origin as the frontend.
 window.POS_API_BASE_URL = '';

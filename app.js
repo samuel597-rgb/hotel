@@ -1,24 +1,26 @@
-import { auth, db, functions, storage, FIREBASE_VAPID_KEY } from './firebase.js';
+import { auth } from './supabase.js';
+import { db, functions, storage } from './supabase-data.js';
 import { toast, printReceipt, printThermal, downloadReceiptPDF } from './receipt.js';
 import { onAuthStateChanged, signOut, updateProfile, sendPasswordResetEmail }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  from './supabase-auth.js';
 import {
   collection, getDocs, getDoc, setDoc, addDoc, updateDoc, deleteDoc, doc,
   query, orderBy, where, serverTimestamp, onSnapshot, limit
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+} from './supabase-data.js';
+import { storageRef, uploadBytes, getDownloadURL } from './supabase-data.js';
 import { httpsCallable }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
+  from './supabase-data.js';
 import { applyAppearance as applySettingsAppearance } from './settings-behaviors.js';
 import {
   loadSettings as loadUserSettings, saveSettings as saveUserSettings,
-  applyAppearance as applyUserAppearance, registerFcmToken, unregisterFcmToken,
+  applyAppearance as applyUserAppearance,
   loadMiniStatement, clearPaymentHistory as archivePaymentHistory,
   loadSessions, endSession as endUserSession
 } from './settings-behaviors.js';
-import { registerPasskey, listPasskeys, deletePasskey, passkeySupported } from './auth-extra.js';
 
 window.ksh = value => `KSH ${Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const asDate = value => value instanceof Date ? value : (value?.toDate?.() || new Date(value || ''));
+const asMillis = value => { const parsed = asDate(value).getTime(); return Number.isFinite(parsed) ? parsed : 0; };
 
 let flushingOfflineWrites = false;
 async function flushOfflineWrites() {
@@ -370,7 +372,7 @@ window.ordersApp = function (root) {
           : query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
       this.unsubscribe = onSnapshot(q, snap => {
         this.orders = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(o => !o.archivedAt)
-          .sort((a,b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+          .sort((a,b) => asMillis(b.createdAt) - asMillis(a.createdAt));
         if (this.selected) this.selected = this.orders.find(order => order.id === this.selected.id) || this.selected;
       }, error => toast(error.message, 'error'));
     },
@@ -406,19 +408,19 @@ window.ordersApp = function (root) {
         toast(result.data.message || 'M-Pesa prompt sent.', 'success');
       } catch (error) { toast(error.message, 'error'); }
     },
-    timestamp(o) { return o.createdAt?.toDate?.().toLocaleString() || 'Sync pending'; }
+    timestamp(o) { return (asMillis(o.createdAt) ? asDate(o.createdAt).toLocaleString() : 'Sync pending'); }
   };
 };
 
 window.messagesApp = function (root) {
   return {
     get root() { return root; },
-    teams: ['Front of House', 'Kitchen'], activeTeam: 'Front of House', messages: [], draft: '', unsubscribe: null, typingUnsubscribe: null, typingNames: [], typingTimer: null, hasLoaded: false, messagePush: true,
+    teams: ['Front of House', 'Kitchen'], activeTeam: 'Front of House', messages: [], draft: '', unsubscribe: null, typingUnsubscribe: null, typingNames: [], typingTimer: null, hasLoaded: false, messagePush: false,
     async init() {
       if (root.role === 'customer') return;
       try {
         const settings = await getDoc(doc(db, 'userSettings', root.user.uid));
-        this.messagePush = settings.exists() ? settings.data().notifications?.['New messages']?.push !== false : true;
+        this.messagePush = false;
       } catch {}
       this.watchTeam();
     },
@@ -429,7 +431,7 @@ window.messagesApp = function (root) {
       const q = query(collection(db, 'messages'), where('team', '==', this.activeTeam), limit(100));
       this.unsubscribe = onSnapshot(q, snap => {
         const incoming = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-          .sort((a,b)=>(a.createdAt?.toMillis?.()||0)-(b.createdAt?.toMillis?.()||0));
+          .sort((a,b)=>asMillis(a.createdAt)-asMillis(b.createdAt));
         if (this.hasLoaded && this.messagePush) {
           incoming.filter(message => !this.messages.some(old => old.id === message.id) && message.fromUid !== root.user?.uid)
             .forEach(message => {
@@ -444,7 +446,7 @@ window.messagesApp = function (root) {
       this.typingUnsubscribe = onSnapshot(query(collection(db, 'typing'), where('team', '==', this.activeTeam)), snap => {
         const freshAfter = Date.now() - 10000;
         this.typingNames = snap.docs.map(item => item.data()).filter(item =>
-          item.uid !== root.user?.uid && item.typing && (item.updatedAt?.toMillis?.() || 0) > freshAfter
+          item.uid !== root.user?.uid && item.typing && asMillis(item.updatedAt) > freshAfter
         ).map(item => item.name || 'A teammate');
       });
     },
@@ -466,10 +468,10 @@ window.messagesApp = function (root) {
       this.setTyping();
       try {
         const result = await backendRequest('/api/messages', 'POST', { team: this.activeTeam, text });
-        if (result.queued) toast('Message queued for Firestore sync.', 'info');
+        if (result.queued) toast('Message queued for retry.', 'info');
       } catch (error) { this.draft = text; toast(error.message, 'error'); }
     },
-    time(message) { return message.createdAt?.toDate?.().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) || 'Sending…'; }
+    time(message) { return (asMillis(message.createdAt) ? asDate(message.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : 'Sending…'); }
   };
 };
 
@@ -506,7 +508,7 @@ window.dashApp = function (root) {
       const start = this.periodStart(offset);
       const end = offset === 0 ? Date.now() : this.periodStart(offset - 1);
       return this.orders.filter(o => {
-        const createdAt = o.createdAt?.toMillis?.();
+        const createdAt = asMillis(o.createdAt);
         return createdAt >= start && createdAt < end;
       });
     },
@@ -532,7 +534,7 @@ window.dashApp = function (root) {
 
       const firstPaidOrder = new Map();
       for (const order of this.orders) {
-        const createdAt = order.createdAt?.toMillis?.();
+        const createdAt = asMillis(order.createdAt);
         if (!order.customerId || !createdAt || (order.paymentStatus !== 'paid' && order.status !== 'paid')) continue;
         const first = firstPaidOrder.get(order.customerId);
         if (first === undefined || createdAt < first) firstPaidOrder.set(order.customerId, createdAt);
@@ -577,13 +579,13 @@ window.dashApp = function (root) {
         let labels, totals;
         if (this.period === 'day') {
           labels = ['9 AM','12 PM','3 PM','6 PM','9 PM']; totals = [0,0,0,0,0];
-          paidOrders.forEach(o => { const date=o.createdAt?.toDate?.(); if (!date) return; const bucket=Math.max(0,Math.min(4,Math.floor((date.getHours()-9)/3))); totals[bucket] += o.total||0; });
+          paidOrders.forEach(o => { const date=asDate(o.createdAt); if (!date) return; const bucket=Math.max(0,Math.min(4,Math.floor((date.getHours()-9)/3))); totals[bucket] += o.total||0; });
         } else {
           const count = this.period === 'week' ? 7 : 30;
           const dates = Array.from({length:count}, (_,i) => { const date=new Date(now); date.setHours(0,0,0,0); date.setDate(date.getDate()-count+1+i); return date; });
           const key = d => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
           labels = dates.map(d => this.period === 'week' ? d.toLocaleDateString('en-KE',{weekday:'short'}) : d.toLocaleDateString('en-KE',{day:'numeric',month:'short'}));
-          totals = dates.map(date => paidOrders.filter(o => { const created=o.createdAt?.toDate?.(); return created && key(created)===key(date); }).reduce((sum,o)=>sum+(o.total||0),0));
+          totals = dates.map(date => paidOrders.filter(o => { const created=asDate(o.createdAt); return created && key(created)===key(date); }).reduce((sum,o)=>sum+(o.total||0),0));
         }
         Chart.getChart(salesEl)?.destroy();
         new Chart(salesEl, {
@@ -692,7 +694,7 @@ window.settingsApp = function (root) {
     tab: 'profile',
     notifList: ['New messages', 'Weekly report', 'Payment success', 'Billing alert', 'New inventory'],
     notif: {
-      'New messages': { push: true, email: false },
+      'New messages': { push: false, email: false },
       'Weekly report': { push: true, email: true },
       'Payment success': { push: false, email: false },
       'Billing alert': { push: true, email: false },
@@ -703,14 +705,13 @@ window.settingsApp = function (root) {
     region: { location: 'Kenya', language: 'English', predictiveText: true },
     settings: { hotelName: "HOTELI POA", currency: 'KES', taxRate: 0 },
     profile: { firstName: '', lastName: '', phone: '', dob: '', location: '' },
-    miniStatement: [], sessions: [], passkeys: [], passkeySupported: false,
+    miniStatement: [], sessions: [],
     avatarUploading: false,
     generalSettingsUnsubscribe: null,
     userSettingsUnsubscribe: null,
     get activeView() { return root.activeView; },
 
     init() {
-      this.passkeySupported = passkeySupported();
       this.$watch('tab', tab => this.loadTab(tab));
       this.$watch('root.user', user => {
         if (user) { this.loadSettings(); this.watchUserSettings(); }
@@ -851,22 +852,9 @@ window.settingsApp = function (root) {
           this.miniStatement = await loadMiniStatement(root.user.uid);
         }
         if (tab === 'security') {
-          [this.sessions, this.passkeys] = await Promise.all([
-            loadSessions(root.user.uid), listPasskeys(root.user.uid)
-          ]);
+          this.sessions = await loadSessions(root.user.uid);
         }
       } catch (error) { toast(error.message, 'error'); }
-    },
-    async togglePush(key) {
-      const enabled = !this.notif[key].push;
-      if (enabled) {
-        const token = await registerFcmToken(root.user.uid, FIREBASE_VAPID_KEY);
-        if (!token) return;
-      } else {
-        await unregisterFcmToken(root.user.uid);
-      }
-      this.notif[key].push = enabled;
-      await this.persistPreferences();
     },
     async toggleEmail(key) {
       this.notif[key].email = !this.notif[key].email;
@@ -888,18 +876,6 @@ window.settingsApp = function (root) {
     async toggleReceipt(key) {
       this.checkout.receipt[key] = !this.checkout.receipt[key];
       await this.persistPreferences();
-    },
-    async addPasskey() {
-      try {
-        await registerPasskey(root.user, root.userName);
-        this.passkeys = await listPasskeys(root.user.uid);
-      } catch (error) { toast(error.message, 'error'); }
-    },
-    async removePasskey(id) {
-      try {
-        await deletePasskey(root.user.uid, id);
-        this.passkeys = await listPasskeys(root.user.uid);
-      } catch (error) { toast(error.message, 'error'); }
     },
     async endSession(sessionId) {
       try {
@@ -983,7 +959,7 @@ window.profileApp = function (root) {
         const paid = orders.filter(o => o.paymentStatus === 'paid' || o.status === 'paid');
         this.ordersServed = paid.length;
         this.monthlySales = paid.filter(o => {
-          const date = o.createdAt?.toDate?.();
+          const date = asDate(o.createdAt);
           return date && date.getMonth() === month.getMonth() && date.getFullYear() === month.getFullYear();
         }).reduce((sum, o) => sum + (o.total || 0), 0);
       } catch (e) { console.warn('Could not load profile stats', e); }
@@ -1008,40 +984,8 @@ window.profileApp = function (root) {
     },
     async changePassword() {
       if (!root.user?.email) return toast('This account does not use email/password sign-in.', 'error');
-      try { await sendPasswordResetEmail(auth, root.user.email); toast('Password reset link sent to your email.', 'success'); }
+      try { await sendPasswordResetEmail(auth, root.user.email); toast('If that email is registered, a reset code has been sent.', 'success'); }
       catch (e) { toast(e.message, 'error'); }
-    }
-  };
-};
-
-window.passkeysApp = function (root) {
-  return {
-    get root() { return root; },
-    passkeys: [], loading: false,
-    init() { this.refresh(); },
-    async refresh() {
-      if (!root.user) return;
-      this.loading = true;
-      try {
-        const { listPasskeys } = await import('./auth-extra.js');
-        this.passkeys = await listPasskeys(root.user.uid);
-      } catch (error) { toast(error.message, 'error'); }
-      finally { this.loading = false; }
-    },
-    async register() {
-      try {
-        const { registerPasskey } = await import('./auth-extra.js');
-        await registerPasskey(root.user, root.userName);
-        await this.refresh();
-      } catch (error) { toast(error.message, 'error'); }
-    },
-    async remove(id) {
-      if (!confirm('Remove this passkey from your account?')) return;
-      try {
-        const { deletePasskey } = await import('./auth-extra.js');
-        await deletePasskey(root.user.uid, id);
-        await this.refresh();
-      } catch (error) { toast(error.message, 'error'); }
     }
   };
 };

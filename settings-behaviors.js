@@ -1,19 +1,18 @@
-import { auth, db, initMessaging } from './firebase.js';
+import { auth } from './supabase.js';
 import {
   collection, doc, getDoc, getDocs, limit, orderBy, query,
-  serverTimestamp, setDoc, updateDoc, where, writeBatch
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-import { deleteToken, getToken, onMessage } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js';
-import { ref, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
-import { storage } from './firebase.js';
+  serverTimestamp, setDoc, updateDoc, where, writeBatch,
+  storageRef, uploadBytes, getDownloadURL
+} from './supabase-data.js';
+import { storage } from './supabase-data.js';
 import { toast } from './receipt.js';
 
 const DEFAULT_SETTINGS = {
   notifications: {
-    'New messages': { push: true, email: false },
+    'New messages': { push: false, email: false },
     'Weekly report': { push: false, email: true },
-    'Payment success': { push: true, email: false },
-    'Billing alert': { push: true, email: true },
+    'Payment success': { push: false, email: false },
+    'Billing alert': { push: false, email: true },
     'New inventory': { push: false, email: true }
   },
   appearance: { theme: 'light', fontSize: 16, lineHeight: 22 },
@@ -81,54 +80,6 @@ export function applyAppearance(settings) {
   document.body.style.lineHeight = String(lineHeight / fontSize);
 }
 
-let activeMessaging = null;
-let unsubscribeForeground = null;
-
-export async function registerFcmToken(uid, vapidKey) {
-  try {
-    requireCurrentUser(uid);
-    if (!vapidKey) throw new Error('Add the Firebase Web Push VAPID key before enabling push notifications.');
-    if (!('Notification' in window) || !('serviceWorker' in navigator))
-      throw new Error('Push notifications are not supported in this browser.');
-    const messaging = await initMessaging();
-    if (!messaging) throw new Error('Push notifications are not supported in this browser.');
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') throw new Error('Notification permission was not granted.');
-
-    const registration = await navigator.serviceWorker.getRegistration('/sw.js');
-    if (!registration) throw new Error('The app service worker is not registered on this site.');
-    const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: registration });
-    if (!token) throw new Error('Firebase did not return a push token.');
-    await setDoc(doc(db, 'userSettings', uid), {
-      fcmToken: token, fcmUpdatedAt: serverTimestamp()
-    }, { merge: true });
-
-    if (!unsubscribeForeground) {
-      activeMessaging = messaging;
-      unsubscribeForeground = onMessage(activeMessaging, payload => {
-        const notification = payload.notification || {};
-        toast(`${notification.title || 'Notification'}: ${notification.body || ''}`, 'info');
-      });
-    }
-    toast('Push notifications enabled.', 'success');
-    return token;
-  } catch (error) {
-    toast(error.message, 'error');
-    return null;
-  }
-}
-
-export async function unregisterFcmToken(uid) {
-  requireCurrentUser(uid);
-  const messaging = await initMessaging();
-  if (messaging) await deleteToken(messaging).catch(() => {});
-  await setDoc(doc(db, 'userSettings', uid), { fcmToken: null }, { merge: true });
-  unsubscribeForeground?.();
-  unsubscribeForeground = null;
-  activeMessaging = null;
-  toast('Push notifications disabled.', 'info');
-}
-
 export async function loadMiniStatement(uid, limitN = 10) {
   const user = requireCurrentUser(uid);
   const token = await user.getIdTokenResult();
@@ -145,7 +96,7 @@ export async function loadMiniStatement(uid, limitN = 10) {
   const snapshot = await getDocs(statementQuery);
   return snapshot.docs.map(order => ({ id: order.id, ...order.data() }))
     .filter(order => !order.archivedAt)
-    .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))
+    .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0))
     .slice(0, limitN);
 }
 
@@ -230,8 +181,7 @@ export async function uploadImage(file, path) {
     if (!['manager', 'admin'].includes(claims.claims.role)) throw new Error('Manager access is required to upload product images.');
   }
 
-  const safeName = `${crypto.randomUUID()}.${file.name.split('.').pop()?.toLowerCase() || 'img'}`;
-  const imageRef = ref(storage, `${path.replace(/\/+$/, '')}/${safeName}`);
+  const imageRef = storageRef(storage, path.replace(/\/+$/, ''));
   await uploadBytes(imageRef, file, { contentType: file.type });
   return getDownloadURL(imageRef);
 }

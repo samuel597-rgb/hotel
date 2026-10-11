@@ -1,23 +1,46 @@
 services:
   - type: web
-    name: hoteli-poa-api
+    name: hoteli-pos-api
     runtime: node
-    plan: starter
-    buildCommand: npm ci
+    plan: free
+    buildCommand: npm ci && npm run build
     startCommand: npm start
-    healthCheckPath: /api/health
-    disk:
-      name: hoteli-poa-sqlite
-      mountPath: /data
-      sizeGB: 1
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
-      - key: SQLITE_PATH
-        value: /data/hoteli_poa.db
-      - key: CORS_ORIGINS
+      - key: SUPABASE_URL
         sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+      - key: SUPABASE_ANON_KEY
         sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: RESET_CODE_PEPPER
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.resend.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        value: resend
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SITE_URL
+        value: https://hoteli-pos-api.onrender.com
+
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_SHORTCODE
+        value: "174379"
+      - key: MPESA_ENV
+        value: sandbox
