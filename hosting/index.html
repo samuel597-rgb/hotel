@@ -65,6 +65,36 @@
       <div class="mt-5 flex gap-3"><button id="forgotCancel" type="button" class="flex-1 rounded-xl border py-3">Cancel</button><button id="forgotSubmit" type="button" class="flex-1 rounded-xl bg-blue-600 py-3 font-semibold text-white">Send reset link</button></div>
     </section>
   </div>
-  <script type="module" src="/auth.js?v=auth-redirect-3"></script>
+  <script type="module">
+    async function startSignIn() {
+      try {
+        if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+          try {
+            const registration = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+            await registration.update();
+            const pendingWorker = registration.installing || registration.waiting;
+            if (pendingWorker && pendingWorker.state !== 'activated') {
+              await new Promise(resolve => pendingWorker.addEventListener('statechange', () => {
+                if (pendingWorker.state === 'activated' || pendingWorker.state === 'redundant') resolve();
+              }));
+            }
+          } catch (updateError) {
+            console.warn('Could not refresh the offline cache:', updateError);
+          }
+        }
+        await import('/auth.js?v=auth-redirect-4');
+      } catch (error) {
+        console.error('Sign-in page failed to start:', error);
+        document.getElementById('welcomeState').classList.add('hidden');
+        document.getElementById('authPanel').classList.remove('hidden');
+        const message = document.createElement('p');
+        message.setAttribute('role', 'alert');
+        message.className = 'mt-5 text-sm text-red-600';
+        message.textContent = 'Sign-in could not load. Check your connection and reload this page.';
+        document.getElementById('authPanel').append(message);
+      }
+    }
+    startSignIn();
+  </script>
 </body>
 </html>

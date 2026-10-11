@@ -1,18 +1,19 @@
 importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js');
 
-const CACHE = 'sams-hotel-v6';
+const CACHE = 'sams-hotel-v7';
 const APP_CACHE_PREFIX = 'sams-hotel-';
 const ASSETS = [
   '/', '/app/', '/auth.html', '/auth.js', '/styles.css',
   '/firebase.js', '/app.js', '/receipt.js', '/auth-extra.js',
-  '/settings-behaviors.js', '/runtime-config.js', '/manifest.json'
+  '/settings-behaviors.js', '/db-service.js', '/reset-password.html',
+  '/runtime-config.js', '/manifest.json'
 ];
 
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE)
-      .then(cache => cache.addAll(ASSETS))
+      .then(cache => cache.addAll(ASSETS.map(asset => new Request(asset, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -50,12 +51,28 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // Always refresh same-origin JavaScript while online. Older releases kept
+  // modules cache-first, which could mix new HTML with stale module exports
+  // and prevent the entire auth UI from starting.
+  if (request.destination === 'script' || /\.js$/i.test(url.pathname)) {
+    event.respondWith(
+      fetch(request, { cache: 'no-cache' }).then(response => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE).then(cache => cache.put(request, copy)).catch(() => {});
+        }
+        return response;
+      }).catch(async () => (await caches.match(request, { ignoreSearch: true })) || Response.error())
+    );
+    return;
+  }
+
   // Never cache Firebase APIs, function calls, or Firebase Hosting internals.
   if (url.pathname.startsWith('/__/') || /firestore|googleapis|identitytoolkit|securetoken|firebasestorage|cloudfunctions/i.test(url.hostname)) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).then(response => {
+      fetch(request, { cache: 'no-cache' }).then(response => {
         if (response.ok) {
           const copy = response.clone();
           caches.open(CACHE).then(cache => cache.put(request, copy)).catch(() => {});
