@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_sam_product_tree" model="ir.ui.view">
+        <field name="name">sam.pos.product.tree</field>
+        <field name="model">sam.pos.product</field>
+        <field name="arch" type="xml">
+            <tree string="POS Products">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="category_id"/>
+                <field name="department"/>
+                <field name="lst_price" widget="monetary"/>
+                <field name="unit_label"/>
+                <field name="is_available"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_sam_product_form" model="ir.ui.view">
+        <field name="name">sam.pos.product.form</field>
+        <field name="model">sam.pos.product</field>
+        <field name="arch" type="xml">
+            <form string="POS Product">
+                <sheet>
+                    <field name="image_128" widget="image" class="oe_avatar"/>
+                    <div class="oe_title">
+                        <h1><field name="name" placeholder="e.g. Rice and Beef"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="category_id"/>
+                            <field name="department"/>
+                            <field name="lst_price" widget="monetary"/>
+                            <field name="unit_label"/>
+                        </group>
+                        <group>
+                            <field name="weight_grams"/>
+                            <field name="sequence"/>
+                            <field name="is_available"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_sam_product" model="ir.actions.act_window">
+        <field name="name">POS Products</field>
+        <field name="res_model">sam.pos.product</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+</odoo>

@@ -1,0 +1,9 @@
+.git
+node_modules
+functions/node_modules
+*.db
+.env
+.env.*
+serviceAccount*.json
+firebase-debug.log
+firestore-debug.log

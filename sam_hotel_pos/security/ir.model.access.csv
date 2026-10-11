@@ -1,0 +1,9 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_sam_category_user,access.sam.category.user,model_sam_pos_category,base.group_user,1,0,0,0
+access_sam_category_manager,access.sam.category.manager,model_sam_pos_category,group_sam_pos_manager,1,1,1,1
+access_sam_product_user,access.sam.product.user,model_sam_pos_product,base.group_user,1,0,0,0
+access_sam_product_manager,access.sam.product.manager,model_sam_pos_product,group_sam_pos_manager,1,1,1,1
+access_sam_order_user,access.sam.order.user,model_sam_pos_order,group_sam_pos_waiter,1,1,1,0
+access_sam_order_supervisor,access.sam.order.supervisor,model_sam_pos_order,group_sam_pos_supervisor,1,1,1,1
+access_sam_orderline_user,access.sam.orderline.user,model_sam_pos_order_line,group_sam_pos_waiter,1,1,1,1
+access_sam_orderline_manager,access.sam.orderline.manager,model_sam_pos_order_line,group_sam_pos_manager,1,1,1,1

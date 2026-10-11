@@ -1,0 +1,14 @@
+{
+  "name": "HOTELI POA POS",
+  "short_name": "HOTELI POA",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#FFFFFF",
+  "theme_color": "#1E6FD9",
+  "description": "Point of Sale for food and drinks at HOTELI POA",
+  "icons": [
+    { "src": "/icons/logo-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/logo-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

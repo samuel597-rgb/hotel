@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+
+        <!-- Categories -->
+        <record id="cat_mains" model="sam.pos.category">
+            <field name="name">Mains</field>
+            <field name="department">food</field>
+            <field name="sequence">10</field>
+            <field name="icon">🍽️</field>
+        </record>
+        <record id="cat_chicken" model="sam.pos.category">
+            <field name="name">Chicken Dishes</field>
+            <field name="department">food</field>
+            <field name="sequence">20</field>
+            <field name="icon">🍗</field>
+        </record>
+        <record id="cat_beef" model="sam.pos.category">
+            <field name="name">Beef Dishes</field>
+            <field name="department">food</field>
+            <field name="sequence">30</field>
+            <field name="icon">🥩</field>
+        </record>
+        <record id="cat_fish" model="sam.pos.category">
+            <field name="name">Fish</field>
+            <field name="department">food</field>
+            <field name="sequence">40</field>
+            <field name="icon">🐟</field>
+        </record>
+        <record id="cat_pasta" model="sam.pos.category">
+            <field name="name">Pasta &amp; Spaghetti</field>
+            <field name="department">food</field>
+            <field name="sequence">50</field>
+            <field name="icon">🍝</field>
+        </record>
+        <record id="cat_local" model="sam.pos.category">
+            <field name="name">Local Favorites</field>
+            <field name="department">food</field>
+            <field name="sequence">60</field>
+            <field name="icon">🍛</field>
+        </record>
+        <record id="cat_beverages" model="sam.pos.category">
+            <field name="name">Beverages</field>
+            <field name="department">beverage</field>
+            <field name="sequence">70</field>
+            <field name="icon">☕</field>
+        </record>
+        <record id="cat_juices" model="sam.pos.category">
+            <field name="name">Juices</field>
+            <field name="department">beverage</field>
+            <field name="sequence">80</field>
+            <field name="icon">🧃</field>
+        </record>
+        <record id="cat_equipment" model="sam.pos.category">
+            <field name="name">Equipment</field>
+            <field name="department">equipment</field>
+            <field name="sequence">90</field>
+            <field name="icon">🍽️</field>
+        </record>
+
+        <!-- Products (prices in USD) -->
+        <record id="prod_rice_beef" model="sam.pos.product">
+            <field name="name">Rice and Beef</field>
+            <field name="category_id" ref="cat_mains"/>
+            <field name="lst_price">7.50</field>
+            <field name="unit_label">plate</field>
+        </record>
+        <record id="prod_mash_pork" model="sam.pos.product">
+            <field name="name">Mash Potatoes na Pork Steak</field>
+            <field name="category_id" ref="cat_mains"/>
+            <field name="lst_price">9.50</field>
+            <field name="unit_label">plate</field>
+        </record>
+        <record id="prod_mash_greens_pork" model="sam.pos.product">
+            <field name="name">Mash Potatoes, Greens na Pork</field>
+            <field name="category_id" ref="cat_mains"/>
+            <field name="lst_price">8.50</field>
+            <field name="unit_label">plate</field>
+        </record>
+        <record id="prod_mash_steak" model="sam.pos.product">
+            <field name="name">Mash Potatoes na Steak</field>
+            <field name="category_id" ref="cat_mains"/>
+            <field name="lst_price">9.00</field>
+            <field name="unit_label">plate</field>
+        </record>
+        <record id="prod_kuku_plantains" model="sam.pos.product">
+            <field name="name">Kuku, Greens na Plantains</field>
+            <field name="category_id" ref="cat_mains"/>
+            <field name="lst_price">9.50</field>
+            <field name="unit_label">plate</field>
+        </record>
+
+        <record id="prod_kuku_wedges" model="sam.pos.product">
+            <field name="name">Kuku na Wedges and Greens</field>
+            <field name="category_id" ref="cat_chicken"/>
+            <field name="lst_price">8.50</field>
+            <field name="unit_label">plate</field>
+        </record>
+        <record id="prod_kuku_pasta" model="sam.pos.product">
+            <field name="name">Kuku na Pasta</field>
+            <field name="category_id" ref="cat_chicken"/>
+            <field name="lst_price">8.00</field>
+            <field name="unit_label">plate</field>
+        </record>
+
+        <record id="prod_ugali_beef_greens" model="sam.pos.product">
+            <field name="name">Ugali, Beef na Greens</field>
+            <field name="category_id" ref="cat_beef"/>
+            <field name="lst_price">6.50</field>
+            <field name="unit_label">plate</field>
+        </record>
+        <record id="prod_chapo_arostoo" model="sam.pos.product">
+            <field name="name">Chapo na Arostoo</field>
+            <field name="category_id" ref="cat_beef"/>
+            <field name="lst_price">7.00</field>
+            <field name="unit_label">plate</field>
+        </record>
+
+        <record id="prod_ugali_fish" model="sam.pos.product">
+            <field name="name">Ugali, Greens na Fish</field>
+            <field name="category_id" ref="cat_fish"/>
+            <field name="lst_price">8.00</field>
+            <field name="unit_label">plate</field>
+        </record>
+
+        <record id="prod_pasta_pork_avocado" model="sam.pos.product">
+            <field name="name">Pasta na Pork na Avocado</field>
+            <field name="category_id" ref="cat_pasta"/>
+            <field name="lst_price">8.50</field>
+            <field name="unit_label">plate</field>
+        </record>
+        <record id="prod_meatballs_spaghetti" model="sam.pos.product">
+            <field name="name">Meatballs na Spaghetti</field>
+            <field name="category_id" ref="cat_pasta"/>
+            <field name="lst_price">8.50</field>
+            <field name="unit_label">plate</field>
+        </record>
+        <record id="prod_spaghetti_mince" model="sam.pos.product">
+            <field name="name">Spaghetti na Mince</field>
+            <field name="category_id" ref="cat_pasta"/>
+            <field name="lst_price">7.50</field>
+            <field name="unit_label">plate</field>
+        </record>
+
+        <record id="prod_biryani" model="sam.pos.product">
+            <field name="name">Biryani</field>
+            <field name="category_id" ref="cat_local"/>
+            <field name="lst_price">8.00</field>
+            <field name="unit_label">plate</field>
+        </record>
+        <record id="prod_ugali_greens_beef" model="sam.pos.product">
+            <field name="name">Ugali, Greens na Beef</field>
+            <field name="category_id" ref="cat_local"/>
+            <field name="lst_price">6.00</field>
+            <field name="unit_label">plate</field>
+        </record>
+
+        <!-- Beverages -->
+        <record id="prod_african_tea" model="sam.pos.product">
+            <field name="name">African Tea</field>
+            <field name="category_id" ref="cat_beverages"/>
+            <field name="lst_price">0.50</field>
+            <field name="unit_label">cup</field>
+        </record>
+        <record id="prod_masala_tea" model="sam.pos.product">
+            <field name="name">Masala Tea</field>
+            <field name="category_id" ref="cat_beverages"/>
+            <field name="lst_price">0.60</field>
+            <field name="unit_label">cup</field>
+        </record>
+        <record id="prod_lemon_tea" model="sam.pos.product">
+            <field name="name">Lemon Tea</field>
+            <field name="category_id" ref="cat_beverages"/>
+            <field name="lst_price">0.60</field>
+            <field name="unit_label">cup</field>
+        </record>
+        <record id="prod_black_tea" model="sam.pos.product">
+            <field name="name">Black Tea</field>
+            <field name="category_id" ref="cat_beverages"/>
+            <field name="lst_price">0.50</field>
+            <field name="unit_label">cup</field>
+        </record>
+        <record id="prod_dawa_honey" model="sam.pos.product">
+            <field name="name">Dawa Tea &amp; Honey</field>
+            <field name="category_id" ref="cat_beverages"/>
+            <field name="lst_price">1.50</field>
+            <field name="unit_label">cup</field>
+        </record>
+        <record id="prod_white_coffee" model="sam.pos.product">
+            <field name="name">White Coffee</field>
+            <field name="category_id" ref="cat_beverages"/>
+            <field name="lst_price">0.75</field>
+            <field name="unit_label">cup</field>
+        </record>
+        <record id="prod_black_coffee" model="sam.pos.product">
+            <field name="name">Black Coffee</field>
+            <field name="category_id" ref="cat_beverages"/>
+            <field name="lst_price">0.50</field>
+            <field name="unit_label">cup</field>
+        </record>
+        <record id="prod_soda" model="sam.pos.product">
+            <field name="name">Soda 300ml</field>
+            <field name="category_id" ref="cat_beverages"/>
+            <field name="lst_price">0.50</field>
+            <field name="unit_label">bottle</field>
+        </record>
+        <record id="prod_dasani" model="sam.pos.product">
+            <field name="name">Dasani Water 500ml</field>
+            <field name="category_id" ref="cat_beverages"/>
+            <field name="lst_price">0.50</field>
+            <field name="unit_label">bottle</field>
+        </record>
+
+        <!-- Juices -->
+        <record id="prod_pineapple" model="sam.pos.product">
+            <field name="name">Pineapple Juice</field>
+            <field name="category_id" ref="cat_juices"/>
+            <field name="lst_price">0.75</field>
+            <field name="unit_label">glass</field>
+        </record>
+        <record id="prod_passion" model="sam.pos.product">
+            <field name="name">Passion Juice</field>
+            <field name="category_id" ref="cat_juices"/>
+            <field name="lst_price">0.75</field>
+            <field name="unit_label">glass</field>
+        </record>
+        <record id="prod_cocktail" model="sam.pos.product">
+            <field name="name">Cocktail Juice</field>
+            <field name="category_id" ref="cat_juices"/>
+            <field name="lst_price">0.75</field>
+            <field name="unit_label">glass</field>
+        </record>
+
+        <!-- Equipment -->
+        <record id="prod_receipt_roll" model="sam.pos.product">
+            <field name="name">Thermal Receipt Roll</field>
+            <field name="category_id" ref="cat_equipment"/>
+            <field name="lst_price">1.20</field>
+            <field name="unit_label">roll</field>
+        </record>
+        <record id="prod_paper_80mm" model="sam.pos.product">
+            <field name="name">POS Paper 80mm</field>
+            <field name="category_id" ref="cat_equipment"/>
+            <field name="lst_price">2.50</field>
+            <field name="unit_label">roll</field>
+        </record>
+        <record id="prod_table_stand" model="sam.pos.product">
+            <field name="name">Table Number Stand</field>
+            <field name="category_id" ref="cat_equipment"/>
+            <field name="lst_price">4.00</field>
+            <field name="unit_label">piece</field>
+        </record>
+        <record id="prod_cutlery_set" model="sam.pos.product">
+            <field name="name">Cutlery Set</field>
+            <field name="category_id" ref="cat_equipment"/>
+            <field name="lst_price">3.00</field>
+            <field name="unit_label">set</field>
+        </record>
+
+    </data>
+</odoo>

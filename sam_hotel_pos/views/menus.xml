@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_sam_hotel_root" name="Sam's Hotel POS" sequence="15"/>
+    <menuitem id="menu_sam_pos_operations" name="Operations"
+              parent="menu_sam_hotel_root" sequence="10"/>
+    <menuitem id="menu_sam_pos_orders" name="Orders"
+              parent="menu_sam_pos_operations"
+              action="action_sam_order" sequence="10"/>
+    <menuitem id="menu_sam_pos_config" name="Configuration"
+              parent="menu_sam_hotel_root" sequence="90"/>
+    <menuitem id="menu_sam_pos_categories" name="Categories"
+              parent="menu_sam_pos_config"
+              action="action_sam_category" sequence="10"/>
+    <menuitem id="menu_sam_pos_products" name="Products"
+              parent="menu_sam_pos_config"
+              action="action_sam_product" sequence="20"/>
+</odoo>

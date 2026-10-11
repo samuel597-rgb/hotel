@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="module_category_sam_hotel" model="ir.module.category">
+        <field name="name">Sam's Hotel POS</field>
+        <field name="sequence">20</field>
+    </record>
+
+    <record id="group_sam_pos_waiter" model="res.groups">
+        <field name="name">Waiter</field>
+        <field name="category_id" ref="module_category_sam_hotel"/>
+    </record>
+
+    <record id="group_sam_pos_supervisor" model="res.groups">
+        <field name="name">Supervisor</field>
+        <field name="category_id" ref="module_category_sam_hotel"/>
+        <field name="implied_ids" eval="[(4, ref('group_sam_pos_waiter'))]"/>
+    </record>
+
+    <record id="group_sam_pos_manager" model="res.groups">
+        <field name="name">Manager</field>
+        <field name="category_id" ref="module_category_sam_hotel"/>
+        <field name="implied_ids" eval="[(4, ref('group_sam_pos_supervisor'))]"/>
+    </record>
+</odoo>
