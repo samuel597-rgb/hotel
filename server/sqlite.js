@@ -143,6 +143,14 @@ for (const row of db.prepare('SELECT id,category,sub_category FROM products WHER
   const name=row.sub_category || (String(row.category).toLowerCase()==='drinks'?'Drinks':'Food');
   setCategory.run(name,row.id);
 }
+// Hide stale/default category rows with no visible products. This also cleans up
+// databases created before categories were derived from the actual menu.
+db.exec(`UPDATE categories SET active=0 WHERE NOT EXISTS (
+  SELECT 1 FROM products p WHERE p.category_id=categories.id AND p.active=1 AND p.is_available=1
+);
+UPDATE categories SET active=1 WHERE EXISTS (
+  SELECT 1 FROM products p WHERE p.category_id=categories.id AND p.active=1 AND p.is_available=1
+);`);
 
 db.prepare(`INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)`)
   .run('general', JSON.stringify({ id: 'general', hotelName: 'HOTELI POA', currency: 'KES', taxRate: 16, taxMode: 'included' }));
@@ -296,15 +304,12 @@ export function issueSession(userId) {
   const token = crypto.randomBytes(32).toString('base64url');
   db.prepare('INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)')
     .run(tokenDigest(token), userId, Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const staff=db.prepare('SELECT id FROM staff WHERE auth_user_id=?').get(userId);
-  if(staff) db.prepare("INSERT INTO sessions(staff_id,token,expires_at) VALUES(?,?,datetime('now','+30 days'))").run(staff.id,tokenDigest(token));
   return token;
 }
 
 export function deleteSession(token) {
   const digest=tokenDigest(token);
   db.prepare('DELETE FROM auth_sessions WHERE token_hash=?').run(digest);
-  db.prepare('DELETE FROM sessions WHERE token=?').run(digest);
 }
 
 export { dbPath };

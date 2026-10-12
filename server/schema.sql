@@ -135,11 +135,6 @@ CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items(order_id);
 INSERT OR IGNORE INTO settings(key,value) VALUES
   ('brand_name','"HOTELI POA"'), ('tax_mode','"included"'), ('tax_rate','16'), ('logo_path','""');
 
-INSERT OR IGNORE INTO categories(name,icon,sort_order) VALUES
-  ('Food','🍽️',1), ('Drinks','🥤',2), ('Pizza','🍕',3), ('Sushi','🍣',4),
-  ('Burgers','🍔',5), ('Pasta','🍝',6), ('Salads','🥗',7), ('Desserts','🍰',8),
-  ('Breakfast','🥐',9);
-
 INSERT OR IGNORE INTO tables(floor,number,status)
   SELECT 'Main Floor', value, 'available' FROM (SELECT 1 value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8);
 INSERT OR IGNORE INTO tables(floor,number,status)

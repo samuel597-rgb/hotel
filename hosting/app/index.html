@@ -154,10 +154,8 @@
               <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <template x-for="c in filteredCategories()" :key="c.id">
                   <button @click="selectCategory(c)"
-                          class="bg-white rounded-xl p-6 text-center border hover:shadow-md">
-                    <div class="text-4xl mb-3" x-text="c.icon"></div>
+                          class="bg-white rounded-xl p-6 text-center border hover:border-blue-300 hover:shadow-md">
                     <div class="font-semibold text-[#0A2540]" x-text="c.name"></div>
-                    <div class="text-xs text-slate-400 mt-1 capitalize" x-text="c.department"></div>
                   </button>
                 </template>
               </div>
@@ -170,9 +168,9 @@
                   <template x-for="p in filteredProducts()" :key="p.id">
                     <button @click="selectProduct(p)"
                             class="bg-white rounded-xl p-4 text-center border hover:shadow-md">
-                      <div class="w-full h-32 bg-blue-50 rounded-lg mb-3 overflow-hidden flex items-center justify-center text-4xl">
+                      <div class="w-full h-32 bg-blue-50 rounded-lg mb-3 overflow-hidden flex items-center justify-center text-slate-400">
                         <template x-if="p.imageUrl"><img :src="p.imageUrl" :alt="p.name" class="w-full h-full object-cover" /></template>
-                        <template x-if="!p.imageUrl"><span x-text="currentCategory.icon"></span></template>
+                        <template x-if="!p.imageUrl"><span class="text-sm">Image unavailable</span></template>
                       </div>
                       <div class="font-semibold text-[#0A2540] text-sm" x-text="p.name"></div>
                       <div class="text-xs text-slate-400" x-text="p.unit"></div>

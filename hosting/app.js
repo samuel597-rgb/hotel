@@ -308,8 +308,9 @@ window.posApp = function (root) {
 
     filteredCategories() {
       const q = this.search.toLowerCase();
-      return q ? this.categories.filter(c => c.name.toLowerCase().includes(q))
-               : this.categories;
+      const populated = this.categories.filter(category => this.products.some(product =>
+        product.categoryId === category.id && product.isAvailable !== false));
+      return q ? populated.filter(c => c.name.toLowerCase().includes(q)) : populated;
     },
     filteredProducts() {
       const list = this.products.filter(p =>

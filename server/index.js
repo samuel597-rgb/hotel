@@ -357,6 +357,7 @@ app.post('/api/products', requireAuth, allowRoles('manager','admin'), productUpl
   const info = db.prepare(`INSERT INTO products(name,price,category,category_id,sub_category,description,image_path,image_url,is_available,active)
     VALUES(?,?,?,?,?,?,?,?,1,1)`).run(name, price, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
     String(req.body?.description || '').slice(0, 2000), imagePath || null, imagePath);
+  db.prepare('UPDATE categories SET active=1 WHERE id=?').run(category.id);
   return respondProduct(res, db.prepare('SELECT * FROM products WHERE id=?').get(info.lastInsertRowid), 201);
 });
 app.put('/api/products/:id', requireAuth, allowRoles('manager','admin'), productUpload.single('image'), (req, res) => {
@@ -371,12 +372,16 @@ app.put('/api/products/:id', requireAuth, allowRoles('manager','admin'), product
   db.prepare(`UPDATE products SET name=?,price=?,category=?,category_id=?,sub_category=?,description=?,image_path=?,image_url=?,active=1,is_available=1 WHERE id=?`)
     .run(name, price, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
       String(req.body?.description ?? existing.description ?? '').slice(0, 2000), imagePath || null, imagePath, existing.id);
+  db.prepare('UPDATE categories SET active=1 WHERE id=?').run(category.id);
   return respondProduct(res, db.prepare('SELECT * FROM products WHERE id=?').get(existing.id));
 });
 app.delete('/api/products/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
   const product = productRowById(req.params.id);
   if (!product) return jsonResponse(res, 404, { error: 'Product not found.' });
   db.prepare('UPDATE products SET active=0,is_available=0 WHERE id=?').run(product.id);
+  if (product.category_id) db.prepare(`UPDATE categories SET active=0 WHERE id=? AND NOT EXISTS (
+    SELECT 1 FROM products WHERE category_id=? AND active=1 AND is_available=1
+  )`).run(product.category_id, product.category_id);
   return res.status(204).end();
 });
 app.post('/api/products/import-legacy', requireAuth, allowRoles('manager','admin'), (req, res) => {
@@ -401,13 +406,17 @@ app.post('/api/products/import-legacy', requireAuth, allowRoles('manager','admin
   return res.json({success:true,imported,skipped});
 });
 
-app.get('/api/categories', (_req, res) => res.json(db.prepare('SELECT id,name,icon,sort_order FROM categories WHERE active=1 ORDER BY sort_order,name COLLATE NOCASE').all()));
+app.get('/api/categories', (_req, res) => res.json(db.prepare(`SELECT c.id,c.name,c.icon,c.sort_order FROM categories c
+  WHERE c.active=1 AND EXISTS (SELECT 1 FROM products p WHERE p.category_id=c.id AND p.active=1 AND p.is_available=1)
+  ORDER BY c.sort_order,c.name COLLATE NOCASE`).all()));
 app.post('/api/categories', requireAuth, allowRoles('manager','admin'), (req, res) => {
   const name = String(req.body?.name || '').trim().slice(0, 80);
   if (!name) return jsonResponse(res, 400, { error: 'Category name is required.' });
   try {
-    const info = db.prepare('INSERT INTO categories(name,icon,sort_order) VALUES(?,?,?)').run(name, String(req.body?.icon || '🍽️'), Number(req.body?.sort_order) || 0);
-    return jsonResponse(res, 201, db.prepare('SELECT * FROM categories WHERE id=?').get(info.lastInsertRowid));
+    db.prepare(`INSERT INTO categories(name,icon,sort_order,active) VALUES(?,?,?,1)
+      ON CONFLICT(name) DO UPDATE SET icon=excluded.icon,sort_order=excluded.sort_order,active=1`)
+      .run(name, String(req.body?.icon || ''), Number(req.body?.sort_order) || 0);
+    return jsonResponse(res, 201, db.prepare('SELECT * FROM categories WHERE name=? COLLATE NOCASE').get(name));
   } catch (error) { if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return jsonResponse(res, 409, { error: 'That category already exists.' }); throw error; }
 });
 app.put('/api/categories/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
