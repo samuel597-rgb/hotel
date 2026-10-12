@@ -4,9 +4,10 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1e6fd9"><title>Staff Portal · HOTELI POA</title>
   <link rel="stylesheet" href="/shared/theme.css"><link rel="stylesheet" href="/portal/portal.css">
-  <script src="/shared/theme.js" defer></script><script src="/shared/password-toggle.js" defer></script><script src="/portal/portal.js" defer></script>
+  <script src="/shared/theme.js" defer></script><script src="/shared/password-toggle.js" defer></script><script src="/portal/portal.js" defer></script><link rel="stylesheet" href="/shared/nav-buttons.css"><script src="/shared/nav-buttons.js" defer></script>
 </head>
 <body><main class="portal-shell"><form id="portal-login" class="portal-card" autocomplete="off">
+  <div id="hp-nav-slot"></div>
   <div class="portal-brand"><img src="/icons/logo-192.png" alt=""><strong>HOTELI POA</strong></div>
   <h1>Staff Portal</h1><p class="portal-muted">Sign in with your phone number or username and PIN.</p>
   <label>Phone number or username<input name="username" required autocomplete="username" inputmode="text" placeholder="Phone number or username"></label>
@@ -14,4 +15,4 @@
   <p id="portal-error" class="portal-error" role="alert"></p><button class="portal-submit" type="submit">Sign in</button>
   <p class="portal-muted portal-foot">Forgot PIN? Contact your administrator.</p>
   <p class="portal-muted portal-foot">Not staff? <a href="/?customer_login=1">Go to customer sign in</a>.</p>
-</form></main></body></html>
+</form></main><script>document.addEventListener('DOMContentLoaded', () => HPNav.render(document.getElementById('hp-nav-slot')));</script></body></html>

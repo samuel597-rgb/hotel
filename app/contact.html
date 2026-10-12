@@ -8,9 +8,12 @@
   <link rel="stylesheet" href="/shared/theme.css">
   <link rel="stylesheet" href="/app/customer.css">
   <script src="/shared/theme.js" defer></script>
+  <link rel="stylesheet" href="/shared/nav-buttons.css">
+  <script src="/shared/nav-buttons.js" defer></script>
 </head>
 <body class="profile-page">
   <header class="customer-header" style="display:flex;justify-content:space-between;padding:10px 5vw;background:white;border-bottom:1px solid #e2e8f0">
+    <div id="hp-nav-slot"></div>
     <a href="/" style="font-weight:900;text-decoration:none;color:#0a2540">HOTELI POA</a>
     <a href="/" style="color:#1e6fd9;text-decoration:none">Menu</a>
   </header>
@@ -33,5 +36,6 @@
     </section>
   </main>
   <footer class="hp-footer">© 2026 HOTELI POA. All rights reserved.</footer>
+  <script>document.addEventListener('DOMContentLoaded', () => HPNav.render(document.getElementById('hp-nav-slot')));</script>
 </body>
 </html>
