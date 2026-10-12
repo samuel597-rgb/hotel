@@ -36,6 +36,14 @@ const allowedOrigins = new Set([
   'http://localhost:3000', 'http://localhost:5173',
   ...(process.env.CORS_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean)
 ]);
+const corsOptions = {
+  origin(origin, done) {
+    if (!origin || allowedOrigins.has(origin)) return done(null, true);
+    return done(null, false);
+  },
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','x-auth-token']
+};
 const scrypt = promisify(crypto.scrypt);
 const safeEmail = value => String(value || '').trim().toLowerCase();
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -44,10 +52,14 @@ const jsonResponse = (res, status, payload) => res.status(status).json(payload);
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
-app.use(cors({ origin(origin, done) {
-  if (!origin || allowedOrigins.has(origin)) return done(null, true);
-  return done(new Error('Origin is not allowed by CORS.'));
-} }));
+const crossOriginCors = cors(corsOptions);
+app.use((req,res,next) => {
+  const origin=req.get('Origin');
+  const currentOrigin=`${req.protocol}://${req.get('host')}`;
+  // Same-origin requests do not require CORS, regardless of Render's generated hostname.
+  if (!origin || origin===currentOrigin) return next();
+  return crossOriginCors(req,res,next);
+});
 app.use(express.json({ limit: '1mb' }));
 
 function bearerToken(req) { return /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')?.[1] || ''; }

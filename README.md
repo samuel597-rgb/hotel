@@ -37,6 +37,8 @@ Free hosts use an ephemeral filesystem. SQLite runs wherever the API process run
 
 To use GitHub Pages for the static frontend instead, point `window.POS_API_BASE_URL` in `runtime-config.js` at the free API origin and allow the Pages origin in the API host's `CORS_ORIGINS`. GitHub Pages by itself cannot provide the backend or SQLite database.
 
+When the frontend and API share the Express host, same-origin API calls work with Render's generated hostname and do not need a CORS allowlist entry. If you host them on separate origins, set `CORS_ORIGINS` on the API to the exact frontend origin(s), comma separated; the API accepts preflight requests with `Authorization` and JSON headers. Avoid wildcard origins.
+
 ## Demo limitations
 
 - Email/password accounts are stored locally with scrypt password hashes. Existing Firebase/Supabase accounts are not imported; create new demo accounts.
