@@ -1,7 +1,7 @@
 'use strict';
 
-// HOTELI POA menu; consumed by the Supabase catalog seed and local previews.
-module.exports = [
+// HOTELI POA menu; used to seed the SQLite catalog when a database is empty.
+export default [
   {
     "name": "Beef Stew / Chips",
     "price": 400,

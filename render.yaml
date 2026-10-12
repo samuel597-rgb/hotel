@@ -9,38 +9,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_PUBLISHABLE_KEY
-        sync: false
-      - key: SUPABASE_SECRET_KEY
-        sync: false
-      - key: RESET_CODE_PEPPER
-        sync: false
-      - key: SMTP_HOST
-        value: smtp.resend.com
-      - key: SMTP_PORT
-        value: "465"
-      - key: SMTP_USER
-        value: resend
-      - key: SMTP_PASS
-        sync: false
-      - key: SMTP_FROM
-        sync: false
-      - key: SITE_URL
-        value: https://hoteli-pos-api.onrender.com
-
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
-      - key: MPESA_CONSUMER_KEY
-        sync: false
-      - key: MPESA_CONSUMER_SECRET
-        sync: false
-      - key: MPESA_PASSKEY
-        sync: false
-      - key: MPESA_SHORTCODE
-        value: "174379"
-      - key: MPESA_ENV
-        value: sandbox
+      - key: DB_PATH
+        value: ./hoteli_poa.db
+      - key: USE_FIREBASE
+        value: "false"
+      - key: CORS_ORIGINS
+        value: https://hoteli-pos-api.onrender.com,https://samuel597-rgb.github.io

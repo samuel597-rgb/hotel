@@ -100,11 +100,12 @@ self.addEventListener('fetch', event => {
 });
 
 firebase.initializeApp({
-  authDomain: 'hoteli-cd840.firebaseapp.com',
-  projectId: 'hoteli-cd840',
-  storageBucket: 'hoteli-cd840.firebasestorage.app',
-  messagingSenderId: '519879537315',
-  appId: '1:519879537315:web:fe10a4698cafe6ab990516'
+  apiKey: 'REMOVED_FROM_ARCHIVE',
+  authDomain: 'REMOVED_FROM_ARCHIVE',
+  projectId: 'REMOVED_FROM_ARCHIVE',
+  storageBucket: 'REMOVED_FROM_ARCHIVE',
+  messagingSenderId: 'REMOVED_FROM_ARCHIVE',
+  appId: 'REMOVED_FROM_ARCHIVE'
 });
 
 const messaging = firebase.messaging();

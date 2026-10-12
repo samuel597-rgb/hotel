@@ -2,6 +2,7 @@
   "name": "HOTELI POA POS",
   "short_name": "HOTELI POA",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#FFFFFF",

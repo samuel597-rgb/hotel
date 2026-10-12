@@ -1,10 +1,10 @@
-import { auth } from './supabase.js';
+import { auth } from './local-api.js';
 import {
   collection, doc, getDoc, getDocs, limit, orderBy, query,
   serverTimestamp, setDoc, updateDoc, where, writeBatch,
   storageRef, uploadBytes, getDownloadURL
-} from './supabase-data.js';
-import { storage } from './supabase-data.js';
+} from './local-data.js';
+import { storage } from './local-data.js';
 import { toast } from './receipt.js';
 
 const DEFAULT_SETTINGS = {

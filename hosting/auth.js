@@ -1,17 +1,15 @@
-import { auth, setSessionPersistence } from './supabase.js';
+import { auth, setSessionPersistence } from './local-api.js';
 import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile,
-  onAuthStateChanged, GoogleAuthProvider, FacebookAuthProvider, signInWithRedirect,
-  signInWithPhoneNumber, signOut
-} from './supabase-auth.js';
-import { httpsCallable, doc, setDoc } from './supabase-data.js';
+  onAuthStateChanged, signOut
+} from './local-auth.js';
+import { doc, setDoc } from './local-data.js';
 import { registerSession } from './settings-behaviors.js';
 import { getUserProfile, saveUserProfile } from './db-service.js';
 
 const $ = id => document.getElementById(id);
 let creating = false;
 let finishing = false;
-let phoneConfirmation = null;
 let nextAction = 'pos';
 const rememberedEmailKey = 'hotelPosRememberedEmail';
 const rememberedNameKey = 'hotelPosRememberedName';
@@ -129,68 +127,7 @@ $('emailForm').addEventListener('submit', async event => {
 });
 
 const forgotModal = $('forgotModal');
-$('forgot').addEventListener('click', () => {
-  $('forgotEmail').value = $('email').value.trim();
-  forgotModal.classList.remove('hidden');
-  forgotModal.classList.add('flex');
-  $('forgotEmail').focus();
-});
-$('forgotCancel').addEventListener('click', () => {
-  forgotModal.classList.add('hidden');
-  forgotModal.classList.remove('flex');
-});
-forgotModal.addEventListener('click', event => { if (event.target === forgotModal) $('forgotCancel').click(); });
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !forgotModal.classList.contains('hidden')) $('forgotCancel').click();
-});
-$('forgotSubmit').addEventListener('click', async () => {
-  const email = $('forgotEmail').value.trim();
-  if (!email) return status('Enter your email address first.', true);
-  $('forgotSubmit').disabled = true;
-  try {
-    await httpsCallable(null, 'request-password-reset')({ email });
-    $('forgotCancel').click();
-    location.href = `/reset-password.html?email=${encodeURIComponent(email)}`;
-  } catch (error) { status(error.message, true); }
-  finally { $('forgotSubmit').disabled = false; }
-});
-
-$('google').addEventListener('click', async () => {
-  try { await signInWithRedirect(auth, new GoogleAuthProvider()); }
-  catch (error) { status(error.message, true); }
-});
-$('facebook').addEventListener('click', async () => {
-  try { await signInWithRedirect(auth, new FacebookAuthProvider()); }
-  catch (error) { status(error.message, true); }
-});
-$('phoneToggle').addEventListener('click', () => $('phonePanel').classList.toggle('hidden'));
-$('sendCode').addEventListener('click', async () => {
-  try {
-    phoneConfirmation = await signInWithPhoneNumber(auth, $('phoneNumber').value.trim());
-    $('smsCode').classList.remove('hidden');
-    $('verifyCode').classList.remove('hidden');
-    status('Verification code sent by SMS.');
-  } catch (error) { status(error.message, true); }
-});
-$('verifyCode').addEventListener('click', async () => {
-  if (!phoneConfirmation) return;
-  creating = true;
-  try {
-    const credential = await phoneConfirmation.confirm($('smsCode').value.trim());
-    let displayName = credential.user.displayName;
-    if (!displayName) {
-      displayName = prompt('Enter your first and last names to finish creating your account:')?.trim();
-      if (!displayName || displayName.split(/\s+/).length < 2) {
-        creating = false;
-        await signOut();
-        return status('Please provide your first and last names, then sign in again.', true);
-      }
-      await updateProfile(credential.user, { displayName });
-    }
-    creating = false;
-    await finish(credential.user, { displayName, accountType: 'customer' });
-  } catch (error) { creating = false; status(error.message, true); }
-});
+if (forgotModal) forgotModal.remove();
 
 // Keep the existing public client names used by the onboarding page.
 export { signInWithEmailAndPassword as signInWithEmailPassword, createUserWithEmailAndPassword as createUserWithEmailPassword };

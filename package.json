@@ -2,27 +2,24 @@
   "name": "hoteli-poa-pos",
   "version": "3.0.0",
   "private": true,
-  "description": "HOTELI POA POS on Supabase and Render",
+  "type": "module",
+  "description": "HOTELI POA POS with a local SQLite demo API",
   "main": "server/index.js",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "start": "node server/index.js",
     "build": "node scripts/build-hosting.js",
     "build:hosting": "node scripts/build-hosting.js",
     "check:server": "node --check server/index.js",
-    "seed": "node server/seed-menu.js"
+    "seed": "node -e \"import('./server/sqlite.js').then(() => console.log('SQLite database initialized.'))\"",
+    "promote": "node server/promote-user.js"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.12.7",
-    "@supabase/supabase-js": "^2.117.3",
-    "axios": "^1.10.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "express-rate-limit": "^7.5.0",
-    "nodemailer": "^10.1.0",
-    "stripe": "^18.3.0"
+    "express-rate-limit": "^7.5.0"
   }
 }

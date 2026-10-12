@@ -1,8 +1,8 @@
-const CACHE = 'sams-hotel-v8';
+const CACHE = 'sams-hotel-sqlite-v3';
 const APP_CACHE_PREFIX = 'sams-hotel-';
 const ASSETS = [
-  '/', '/app/', '/auth.html', '/auth.js', '/styles.css',
-  '/supabase.js', '/supabase-auth.js', '/supabase-data.js', '/app.js',
+  '/', '/app/', '/auth.html', '/auth.js', '/styles.css', '/icons/logo-192.png', '/icons/logo-512.png', '/icons/logo-180.png',
+  '/local-api.js', '/local-auth.js', '/local-data.js', '/app.js',
   '/receipt.js', '/settings-behaviors.js', '/db-service.js',
   '/reset-password.html', '/runtime-config.js', '/manifest.json'
 ];

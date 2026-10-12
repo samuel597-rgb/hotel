@@ -3,96 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Sign in · HOTELI POA</title>
-  <link rel="stylesheet" href="/styles.css" />
-  <script src="https://cdn.tailwindcss.com"></script>
+  <meta http-equiv="refresh" content="0;url=./app/" />
+  <title>HOTELI POA</title>
 </head>
-<body class="min-h-screen bg-slate-50 flex items-center justify-center p-4 sm:p-6">
-  <main class="grid w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-xl md:grid-cols-2">
-    <section class="flex flex-col justify-center bg-[#0A2540] p-8 text-white sm:p-10 lg:p-12">
-      <a href="/" class="mb-8 flex w-fit items-center gap-3 text-white no-underline">
-        <span class="grid h-12 w-12 place-items-center rounded-xl bg-[#1E6FD9] text-2xl font-bold">S</span>
-        <span class="text-2xl font-semibold">HOTELI POA</span>
-      </a>
-      <h1 class="text-3xl font-bold leading-tight">Manage sales, inventory and other transactions</h1>
-      <p class="mt-4 text-slate-300">Point of Sale for food, beverages and equipment.</p>
-      <div class="mt-9 flex gap-2" aria-hidden="true"><span class="h-2 w-6 rounded-full bg-[#1E6FD9]"></span><span class="h-2 w-2 rounded-full bg-slate-500"></span><span class="h-2 w-2 rounded-full bg-slate-500"></span></div>
-    </section>
-
-    <section class="p-7 sm:p-10 lg:p-12">
-      <div id="welcomeState">
-        <p class="text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">HOTELI POA</p>
-        <h2 class="mt-3 text-3xl font-bold text-[#0A2540]">Welcome</h2>
-        <p class="mt-2 text-slate-500">Sign in to order food and drinks or connect with our team.</p>
-        <button id="orderNow" type="button" class="mt-7 w-full rounded-lg bg-[#1E6FD9] py-3 font-semibold text-white hover:bg-blue-700">Order Now</button>
-        <button id="sendMessage" type="button" class="mt-3 w-full rounded-lg border border-slate-200 py-3 font-semibold text-[#0A2540]">Send Message</button>
-        <button id="showSignIn" type="button" class="mt-7 w-full rounded-lg bg-[#0A2540] py-3 font-semibold text-white">Sign In</button>
-        <button id="showCreate" type="button" class="mt-3 w-full py-2 text-sm text-blue-600">New here? Create an account</button>
-      </div>
-
-      <div id="authPanel" class="hidden">
-        <button id="backWelcome" type="button" class="mb-5 text-sm text-blue-600">← Back</button>
-      <h2 id="title" class="text-2xl font-bold text-[#0A2540]">Welcome back</h2>
-      <p id="subtitle" class="mb-6 mt-1 text-slate-500">Sign in to continue to your order.</p>
-      <form id="emailForm" autocomplete="on" class="space-y-4">
-        <div id="nameFields" class="hidden space-y-3"><input id="fullName" autocomplete="name" placeholder="Your official first and last names" class="w-full rounded-lg border border-slate-200 p-3" /><input id="phone" autocomplete="tel" placeholder="Phone number (e.g. +2547…)" class="w-full rounded-lg border border-slate-200 p-3" /></div>
-        <label class="block text-sm font-medium text-slate-700" for="email">Email</label>
-        <input id="email" name="email" type="email" autocomplete="username" required placeholder="Email address" class="-mt-3 w-full rounded-lg border border-slate-200 p-3" />
-        <label class="block text-sm font-medium text-slate-700" for="password">Password</label>
-        <div class="relative -mt-3"><input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" placeholder="Password (at least 8 characters)" class="w-full rounded-lg border border-slate-200 p-3 pr-16" /><button id="togglePassword" type="button" class="absolute inset-y-0 right-3 text-lg text-blue-600" aria-label="Show password" aria-pressed="false">👁️</button></div>
-        <label class="flex items-center gap-2 text-sm text-slate-600"><input id="rememberMe" type="checkbox" class="accent-blue-600" /> Remember me</label>
-        <div class="flex items-center justify-between"><button id="forgot" type="button" class="text-sm text-blue-600">Forgot password?</button><button id="toggleCreate" type="button" class="text-sm text-slate-600"><span id="toggleText">New here? Create an account</span></button></div>
-        <button id="submitEmail" type="submit" class="w-full rounded-lg bg-[#1E6FD9] py-3 font-semibold text-white hover:bg-blue-700">Sign in</button>
-        <p id="status" aria-live="polite" class="text-sm"></p>
-      </form>
-
-      <div class="my-5 flex items-center gap-3 text-xs text-slate-400"><span class="h-px flex-1 bg-slate-200"></span><span>OR CONTINUE WITH</span><span class="h-px flex-1 bg-slate-200"></span></div>
-      <div class="grid grid-cols-2 gap-3"><button id="google" type="button" class="rounded-lg border border-slate-200 py-3 font-medium">Google</button><button id="facebook" type="button" class="rounded-lg border border-slate-200 py-3 font-medium">Facebook</button></div>
-      <div class="mt-5 border-t border-slate-200 pt-4"><button id="phoneToggle" type="button" class="text-sm text-blue-600">Sign in with phone code</button><div id="phonePanel" class="hidden mt-3 space-y-3"><input id="phoneNumber" type="tel" autocomplete="tel" placeholder="+2547XXXXXXXX" class="w-full rounded-lg border border-slate-200 p-3" /><div id="recaptcha-container"></div><button id="sendCode" type="button" class="w-full rounded-lg border py-3">Send verification code</button><input id="smsCode" inputmode="numeric" autocomplete="one-time-code" placeholder="SMS verification code" class="hidden w-full rounded-lg border p-3" /><button id="verifyCode" type="button" class="hidden w-full rounded-lg bg-blue-600 py-3 text-white">Verify and sign in</button></div></div>
-      <p class="mt-6 text-center text-xs text-slate-400">© 2026 HOTELI POA POS</p>
-      </div>
-    </section>
-  </main>
-
-  <div id="forgotModal" class="hidden fixed inset-0 z-50 items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="forgotTitle">
-    <section class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-      <h2 id="forgotTitle" class="text-xl font-bold text-[#0A2540]">Reset your password</h2>
-      <p class="mt-2 text-sm text-slate-500">Enter your email and we’ll email you a six-digit reset code that expires in one minute.</p>
-      <label for="forgotEmail" class="mt-5 block text-sm font-medium text-slate-700">Email</label>
-      <input id="forgotEmail" type="email" autocomplete="email" class="mt-1 w-full rounded-xl border p-3" />
-      <div class="mt-5 flex gap-3"><button id="forgotCancel" type="button" class="flex-1 rounded-xl border py-3">Cancel</button><button id="forgotSubmit" type="button" class="flex-1 rounded-xl bg-blue-600 py-3 font-semibold text-white">Send reset code</button></div>
-    </section>
-  </div>
-  <script type="module">
-    async function startSignIn() {
-      try {
-        if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-          try {
-            const registration = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
-            await registration.update();
-            const pendingWorker = registration.installing || registration.waiting;
-            if (pendingWorker && pendingWorker.state !== 'activated') {
-              await new Promise(resolve => pendingWorker.addEventListener('statechange', () => {
-                if (pendingWorker.state === 'activated' || pendingWorker.state === 'redundant') resolve();
-              }));
-            }
-          } catch (updateError) {
-            console.warn('Could not refresh the offline cache:', updateError);
-          }
-        }
-        await import('/auth.js?v=auth-redirect-4');
-      } catch (error) {
-        console.error('Sign-in page failed to start:', error);
-        document.getElementById('welcomeState').classList.add('hidden');
-        document.getElementById('authPanel').classList.remove('hidden');
-        const message = document.createElement('p');
-        message.setAttribute('role', 'alert');
-        message.className = 'mt-5 text-sm text-red-600';
-        message.textContent = 'Sign-in could not load. Check your connection and reload this page.';
-        document.getElementById('authPanel').append(message);
-      }
-    }
-    startSignIn();
-  </script>
+<body>
+  <p>Opening the customer menu… <a href="./app/">Continue</a></p>
+  <script>location.replace('./app/');</script>
 </body>
 </html>

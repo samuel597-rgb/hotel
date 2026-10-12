@@ -2,31 +2,25 @@ import 'dotenv/config';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import nodemailer from 'nodemailer';
-import axios from 'axios';
-import Stripe from 'stripe';
-import { createClient } from '@supabase/supabase-js';
+import { db, deleteRecord, deleteSession, findUserByToken, issueSession, readRecords, writeRecord } from './sqlite.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, '../hosting');
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
-const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 const allowedOrigins = new Set([
   'http://localhost:3000', 'http://localhost:5173',
-  ...(process.env.CORS_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean),
-  process.env.SITE_URL
-].filter(Boolean));
-const service = supabaseUrl && supabaseSecretKey
-  ? createClient(supabaseUrl, supabaseSecretKey, {
-      auth: { persistSession: false, autoRefreshToken: false }
-    })
-  : null;
+  ...(process.env.CORS_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean)
+]);
+const scrypt = promisify(crypto.scrypt);
+const safeEmail = value => String(value || '').trim().toLowerCase();
+const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+const validRecordId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : crypto.randomUUID();
+const jsonResponse = (res, status, payload) => res.status(status).json(payload);
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -34,409 +28,297 @@ app.use(cors({ origin(origin, done) {
   if (!origin || allowedOrigins.has(origin)) return done(null, true);
   return done(new Error('Origin is not allowed by CORS.'));
 } }));
-app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), asyncRoute(async (req, res) => {
-  if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(503).send('Stripe webhook is not configured.');
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-  let event;
-  try { event = stripe.webhooks.constructEvent(req.body, req.get('stripe-signature'), process.env.STRIPE_WEBHOOK_SECRET); }
-  catch { return res.status(400).send('Invalid webhook signature.'); }
-  if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
-    const session = event.data.object;
-    const orderId = session.metadata?.orderId || session.client_reference_id;
-    if (orderId && session.payment_status === 'paid') {
-      const rows = await readRecords('orders', { id: orderId });
-      if (rows.length) await writeRecord('orders', orderId, { ...rows[0].data, status: 'paid', paymentStatus: 'paid',
-        paymentMethod: 'card', paidAt: new Date().toISOString(), stripeSessionId: session.id }, rows[0].owner_id);
-    }
-  }
-  return res.json({ received: true });
-}));
 app.use(express.json({ limit: '1mb' }));
 
-const resetLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 8, standardHeaders: 'draft-7', legacyHeaders: false });
-const completeLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false });
-
-function requireService(_req, res, next) {
-  if (!service) return res.status(503).json({ error: 'The Supabase service is not configured.' });
-  next();
+function bearerToken(req) { return /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')?.[1] || ''; }
+function requireAuth(req, res, next) {
+  req.user = bearerToken(req) ? findUserByToken(bearerToken(req)) : null;
+  if (!req.user) return jsonResponse(res, 401, { error: 'Your sign-in session is invalid or expired.' });
+  return next();
 }
-
-async function resolveUser(req) {
-  const token = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')?.[1];
-  if (!token || !service) return null;
-  const { data, error } = await service.auth.getUser(token);
-  if (error || !data.user) return null;
-  const { data: role } = await service.from('user_roles').select('role').eq('user_id', data.user.id).maybeSingle();
-  return { ...data.user, role: role?.role || 'customer' };
+function optionalAuth(req, _res, next) {
+  req.user = bearerToken(req) ? findUserByToken(bearerToken(req)) : null;
+  return next();
 }
-
-async function requireAuth(req, res, next) {
-  try {
-    req.user = await resolveUser(req);
-    if (!req.user) return res.status(401).json({ error: 'Your sign-in session is invalid or expired.' });
-    next();
-  } catch (error) { next(error); }
-}
-
 function allowRoles(...roles) {
-  return (req, res, next) => roles.includes(req.user.role)
-    ? next()
-    : res.status(403).json({ error: 'You do not have permission to perform this action.' });
+  return (req, res, next) => roles.includes(req.user.role) ? next()
+    : jsonResponse(res, 403, { error: 'You do not have permission to perform this action.' });
 }
-
-function asyncRoute(handler) {
-  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+function userSummary(user) {
+  const name = user.name || user.user_metadata?.full_name || '';
+  return { id: user.id, uid: user.id, email: user.email, role: user.role,
+    displayName: name, phoneNumber: user.phone || user.user_metadata?.phone || '', photoURL: user.photo_url || user.user_metadata?.avatar_url || '',
+    user_metadata: { full_name: name, phone: user.phone || user.user_metadata?.phone || '', avatar_url: user.photo_url || user.user_metadata?.avatar_url || '' } };
 }
-
-function validRecordId(value) {
-  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value)
-    ? value : crypto.randomUUID();
+async function createPasswordHash(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = await scrypt(password, salt, 64);
+  return `scrypt$${salt}$${hash.toString('hex')}`;
 }
-
-async function readRecords(collectionPath, { ownerId, id } = {}) {
-  let request = service.from('app_records').select('id,owner_id,data').eq('collection_path', collectionPath);
-  if (id) request = request.eq('id', id);
-  if (ownerId) request = request.eq('owner_id', ownerId);
-  const { data, error } = await request;
-  if (error) throw error;
-  return data || [];
-}
-
-async function writeRecord(collectionPath, id, data, ownerId = null) {
-  const { error } = await service.from('app_records').upsert({
-    collection_path: collectionPath, id, owner_id: ownerId, data,
-    updated_at: new Date().toISOString()
-  }, { onConflict: 'collection_path,id' });
-  if (error) throw error;
-}
-
-function hasMailerConfig() {
-  return Boolean(process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_FROM);
-}
-
-const transporter = hasMailerConfig() ? nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.resend.com',
-  port: Number(process.env.SMTP_PORT || 465),
-  secure: Number(process.env.SMTP_PORT || 465) === 465,
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-}) : null;
-
-const resetHash = (salt, code) => crypto.createHmac('sha256', process.env.RESET_CODE_PEPPER || '')
-  .update(`${salt}:${code}`).digest('hex');
-
-async function findUserByEmail(email) {
-  for (let page = 1; page <= 100; page += 1) {
-    const { data, error } = await service.auth.admin.listUsers({ page, perPage: 1000 });
-    if (error) throw error;
-    const user = data.users.find(item => item.email?.toLowerCase() === email);
-    if (user) return user;
-    if (data.users.length < 1000) return null;
+async function ensureDemoStaffAccounts() {
+  const accounts = [
+    { email: 'demo-admin@hoteli.local', name: 'Admin 1', password: 'admin@1234', role: 'admin' },
+    { email: 'demo-employee@hoteli.local', name: 'Employee 1', password: 'emplo@1234', role: 'waiter' }
+  ];
+  for (const account of accounts) {
+    const passwordHash = await createPasswordHash(account.password);
+    db.prepare(`INSERT INTO auth_users(id,email,name,password_hash,role) VALUES(?,?,?,?,?)
+      ON CONFLICT(email) DO UPDATE SET name=excluded.name,password_hash=excluded.password_hash,role=excluded.role`)
+      .run(`demo-${account.role}`, account.email, account.name, passwordHash, account.role);
   }
-  throw new Error('User lookup reached the configured page limit.');
+}
+async function verifyPassword(password, stored) {
+  const [scheme, salt, hex] = String(stored || '').split('$');
+  if (scheme !== 'scrypt' || !salt || !hex) return false;
+  const candidate = await scrypt(password, salt, 64);
+  const expected = Buffer.from(hex, 'hex');
+  return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+}
+function getStoredUser(email) { return db.prepare('SELECT * FROM auth_users WHERE email = ? COLLATE NOCASE').get(email); }
+function publicPath(pathname, id) {
+  return pathname === 'products' || pathname === 'categories' || (pathname === 'settings' && id === 'general');
+}
+function pathOwner(pathname) {
+  const parts = pathname.split('/').filter(Boolean);
+  if (['users', 'userSettings', 'settings'].includes(parts[0]) && parts[1]) return parts[1];
+  return null;
+}
+function recordOwner(pathname, id) {
+  return pathOwner(pathname) || (id && ['users', 'userSettings', 'settings'].includes(pathname) ? id : null);
+}
+function checkRecordRead(req, res, pathname, id) {
+  if (publicPath(pathname, id)) return true;
+  if (!req.user) return jsonResponse(res, 401, { error: 'Sign in to access this data.' }), false;
+  const owner = recordOwner(pathname, id);
+  if (['users', 'userSettings', 'settings'].includes(pathname) && !id) return jsonResponse(res, 403, { error: 'A specific account record is required.' }), false;
+  if (owner && owner !== req.user.id) return jsonResponse(res, 403, { error: 'You cannot access another user’s data.' }), false;
+  if (['messages', 'typing', 'mpesa_payments'].includes(pathname)
+      && !['waiter','cashier','supervisor','manager','admin'].includes(req.user.role)) {
+    return jsonResponse(res, 403, { error: 'This record collection is limited to staff accounts.' }), false;
+  }
+  return true;
 }
 
-app.get('/health', (_req, res) => {
-  const configured = Boolean(service && supabasePublishableKey);
-  return res.status(configured ? 200 : 503).json({ status: configured ? 'ok' : 'configuration-required', timestamp: new Date().toISOString() });
-});
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: Boolean(service) }));
+const loginLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false });
+app.post('/api/auth/signup', loginLimiter, asyncRoute(async (req, res) => {
+  const email = safeEmail(req.body?.email);
+  const password = String(req.body?.password || '');
+  const name = String(req.body?.displayName || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 || password.length > 128 || name.length < 2) {
+    return jsonResponse(res, 400, { error: 'Enter a valid email, a name, and a password of at least 8 characters.' });
+  }
+  if (getStoredUser(email)) return jsonResponse(res, 409, { error: 'An account with this email already exists.' });
+  const id = crypto.randomUUID();
+  const passwordHash = await createPasswordHash(password);
+  try {
+    db.prepare('INSERT INTO auth_users(id,email,name,password_hash,role) VALUES(?,?,?,?,?)')
+      .run(id, email, name, passwordHash, 'customer');
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return jsonResponse(res, 409, { error: 'An account with this email already exists.' });
+    throw error;
+  }
+  const row = db.prepare('SELECT * FROM auth_users WHERE id=?').get(id);
+  const token = issueSession(id);
+  writeRecord('users', id, { id, name, email, role: 'customer', status: 'active', updatedAt: new Date().toISOString() }, id);
+  return jsonResponse(res, 201, { token, user: userSummary(row) });
+}));
 
-// Public Supabase anon values are served at runtime so no credentials enter Git.
+app.post('/api/auth/login', loginLimiter, asyncRoute(async (req, res) => {
+  const identifier = safeEmail(req.body?.username || req.body?.email);
+  const demoAccounts = { 'admin 1': 'demo-admin@hoteli.local', 'employee 1': 'demo-employee@hoteli.local' };
+  const email = demoAccounts[identifier] || identifier;
+  const password = String(req.body?.password || '');
+  const row = getStoredUser(email);
+  if (!row || !(await verifyPassword(password, row.password_hash))) {
+    return jsonResponse(res, 401, { error: 'Email or password is incorrect.' });
+  }
+  const token = issueSession(row.id);
+  return jsonResponse(res, 200, { token, user: userSummary(row) });
+}));
+
+app.get('/api/auth/session', requireAuth, (req, res) => jsonResponse(res, 200, { user: userSummary(req.user) }));
+app.post('/api/auth/logout', (req, res) => {
+  const token = bearerToken(req);
+  if (token) deleteSession(token);
+  return res.json({ success: true });
+});
+app.post(['/api/request-password-reset', '/api/complete-password-reset'], (_req, res) =>
+  jsonResponse(res, 501, { error: 'Email password reset is not available in the local SQLite demo.' }));
+
+app.get('/health', (_req, res) => res.json({ status: 'ok', database: 'sqlite' }));
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: 'sqlite' }));
 app.get('/runtime-config.json', (_req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json({
-    supabaseUrl: supabaseUrl || '',
-    supabaseAnonKey: supabasePublishableKey || '',
-    apiBaseUrl: ''
-  });
+  return res.json({ database: 'sqlite', apiBaseUrl: process.env.PUBLIC_API_URL || '' });
+});
+app.get('/api/me', requireAuth, (req, res) => {
+  const profile = readRecords('users', { id: req.user.id, ownerId: req.user.id })[0]?.data || null;
+  return res.json({ user: userSummary(req.user), role: req.user.role, profile });
 });
 
-app.post('/api/request-password-reset', requireService, resetLimiter, asyncRoute(async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
-  if (!transporter || !process.env.RESET_CODE_PEPPER) {
-    return res.status(503).json({ error: 'Password reset email is not configured.' });
-  }
-
-  const user = await findUserByEmail(email);
-  // Use the same response for registered and unregistered addresses.
-  if (!user) return res.json({ message: 'If that email is registered, a reset code has been sent.' });
-
-  const code = String(crypto.randomInt(100000, 1000000));
-  const salt = crypto.randomBytes(24).toString('hex');
-  const expiresAt = new Date(Date.now() + 60 * 1000).toISOString();
-  const { error: saveError } = await service.from('password_resets').upsert({
-    email, user_id: user.id, code_hash: resetHash(salt, code), code_salt: salt, expires_at: expiresAt
-  }, { onConflict: 'email' });
-  if (saveError) throw saveError;
-
-  try {
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM,
-      to: email,
-      subject: 'HOTELI POA POS — Password reset code',
-      text: `Your password reset code is ${code}. It expires in 1 minute. If you did not request this, ignore this email.`,
-      html: `<h2>Password reset</h2><p>Your reset code is <strong>${code}</strong>.</p><p>It expires in 1 minute. If you did not request this, ignore this email.</p>`
-    });
-  } catch (error) {
-    console.error('Password reset email could not be sent:', error.message);
-    await service.from('password_resets').delete().eq('email', email);
-  }
-  return res.json({ message: 'If that email is registered, a reset code has been sent.' });
-}));
-
-app.post('/api/complete-password-reset', requireService, completeLimiter, asyncRoute(async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  const code = String(req.body?.code || '').trim();
-  const newPassword = String(req.body?.newPassword || '');
-  if (!email || !/^\d{6}$/.test(code) || newPassword.length < 8 || newPassword.length > 128) {
-    return res.status(400).json({ error: 'Enter your email, six-digit code, and a password of at least 8 characters.' });
-  }
-
-  const { data: reset, error: readError } = await service.from('password_resets')
-    .select('email,user_id,code_hash,code_salt,expires_at').eq('email', email).maybeSingle();
-  if (readError) throw readError;
-  const expected = reset && resetHash(reset.code_salt, code);
-  const validHash = expected && Buffer.from(expected, 'hex').length === Buffer.from(reset.code_hash, 'hex').length
-    && crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(reset.code_hash, 'hex'));
-  if (!reset || !validHash) return res.status(400).json({ error: 'Invalid or expired reset code.' });
-  if (Date.parse(reset.expires_at) <= Date.now()) {
-    await service.from('password_resets').delete().eq('email', email);
-    return res.status(400).json({ error: 'Invalid or expired reset code.' });
-  }
-
-  const { error: updateError } = await service.auth.admin.updateUserById(reset.user_id, { password: newPassword });
-  if (updateError) throw updateError;
-  const { error: deleteError } = await service.from('password_resets').delete().eq('email', email);
-  if (deleteError) throw deleteError;
-  return res.json({ message: 'Password updated successfully.' });
-}));
-
-app.get('/api/me', requireAuth, asyncRoute(async (req, res) => {
-  const { data: profile } = await service.from('app_records').select('data')
-    .eq('collection_path', 'users').eq('id', req.user.id).maybeSingle();
-  return res.json({ user: req.user, role: req.user.role, profile: profile?.data || null });
-}));
-
-// Generic list endpoints used by POS views. RLS remains enabled for browser reads.
-app.get('/api/products', requireService, asyncRoute(async (_req, res) => {
-  const rows = await readRecords('products');
+app.get('/api/products', (req, res) => {
+  const rows = readRecords('products');
   return res.json(rows.map(row => ({ id: row.id, ...row.data })).filter(item => item.isAvailable !== false));
-}));
+});
 
-app.get('/api/orders', requireAuth, asyncRoute(async (req, res) => {
-  let rows = await readRecords('orders');
+app.get('/api/records', (req, res) => {
+  const token = bearerToken(req);
+  req.user = token ? findUserByToken(token) : null;
+  const pathname = String(req.query.path || '').replace(/^\/+|\/+$/g, '');
+  const id = req.query.id ? String(req.query.id) : null;
+  if (!/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+){0,4}$/.test(pathname)) return jsonResponse(res, 400, { error: 'Invalid record path.' });
+  if (!checkRecordRead(req, res, pathname, id)) return;
+  const privateCollection = ['users', 'userSettings'].includes(pathname.split('/')[0]);
+  let rows = readRecords(pathname, { id, ownerId: privateCollection ? req.user?.id : undefined });
+  if (pathname === 'orders' && req.user) {
+    if (req.user.role === 'customer') rows = rows.filter(row => row.data.customerId === req.user.id);
+    if (req.user.role === 'waiter') rows = rows.filter(row => row.data.waiterId === req.user.id);
+    if (['cashier','supervisor'].includes(req.user.role)) rows = rows.filter(row => row.data.paymentStatus === 'pending');
+  }
+  return res.json({ records: rows });
+});
+
+app.post('/api/records', requireAuth, (req, res) => {
+  const pathname = String(req.body?.path || '');
+  const id = String(req.body?.id || '');
+  const data = req.body?.data;
+  if (!/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+){0,4}$/.test(pathname) || !/^[A-Za-z0-9_-]{1,128}$/.test(id) || !data || typeof data !== 'object' || Array.isArray(data)) {
+    return jsonResponse(res, 400, { error: 'Invalid record.' });
+  }
+  if ((pathname === 'products' || (pathname === 'settings' && id === 'general'))
+      && !['manager','admin'].includes(req.user.role)) return jsonResponse(res, 403, { error: 'Manager access is required.' });
+  const owner = recordOwner(pathname, id);
+  if (owner && owner !== req.user.id) return jsonResponse(res, 403, { error: 'You cannot edit another user’s data.' });
+  if (['orders','messages','mpesa_payments'].includes(pathname)) return jsonResponse(res, 400, { error: 'Use the POS API endpoint for this record type.' });
+  if (pathname === 'users') {
+    if (id !== req.user.id) return jsonResponse(res, 403, { error: 'You cannot edit another user’s profile.' });
+    data.role = req.user.role;
+  }
+  if (pathname === 'userSettings' && id !== req.user.id) return jsonResponse(res, 403, { error: 'You cannot edit another user’s settings.' });
+  writeRecord(pathname, id, data, owner || req.user.id);
+  return jsonResponse(res, 200, { success: true, id });
+});
+app.delete('/api/records', requireAuth, (req, res) => {
+  const pathname = String(req.query.path || '');
+  const id = String(req.query.id || '');
+  const owner = recordOwner(pathname, id);
+  if (!/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+){0,4}$/.test(pathname) || !id) return jsonResponse(res, 400, { error: 'Invalid record.' });
+  if (pathname === 'products' || (pathname === 'settings' && id === 'general')) {
+    if (!['manager','admin'].includes(req.user.role)) return jsonResponse(res, 403, { error: 'Manager access is required.' });
+  }
+  if (owner && owner !== req.user.id) return jsonResponse(res, 403, { error: 'You cannot delete another user’s data.' });
+  deleteRecord(pathname, id);
+  return res.json({ success: true });
+});
+
+app.get('/api/orders', requireAuth, (req, res) => {
+  let rows = readRecords('orders');
   if (req.user.role === 'customer') rows = rows.filter(row => row.data.customerId === req.user.id);
   if (req.user.role === 'waiter') rows = rows.filter(row => row.data.waiterId === req.user.id);
-  if (['cashier', 'supervisor'].includes(req.user.role)) rows = rows.filter(row => row.data.paymentStatus === 'pending');
-  if (!['customer','waiter','cashier','supervisor','manager','admin'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'You do not have permission to view orders.' });
-  }
+  if (['cashier','supervisor'].includes(req.user.role)) rows = rows.filter(row => row.data.paymentStatus === 'pending');
   return res.json(rows.map(row => ({ id: row.id, ...row.data })).filter(order => !order.archivedAt)
-    .sort((a,b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0)));
-}));
-
-app.post('/api/orders', requireAuth, asyncRoute(async (req, res) => {
+    .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0)));
+});
+app.post('/api/orders', optionalAuth, (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
-  if (!items.length || items.length > 100) return res.status(400).json({ error: 'An order must contain between 1 and 100 items.' });
+  if (!items.length || items.length > 100) return jsonResponse(res, 400, { error: 'An order must contain between 1 and 100 items.' });
   const lines = [];
   let subtotal = 0;
   for (const item of items) {
     const productId = String(item.productId || item.id || '');
     const quantity = Number(item.qty ?? item.quantity);
-    if (!productId || !Number.isFinite(quantity) || quantity <= 0 || quantity > 1000) {
-      return res.status(400).json({ error: 'Order item or quantity is invalid.' });
+    const product = readRecords('products', { id: productId })[0]?.data;
+    if (!productId || !Number.isFinite(quantity) || quantity <= 0 || quantity > 1000 || !product || product.isAvailable === false) {
+      return jsonResponse(res, 400, { error: 'An order item, quantity, or availability is invalid.' });
     }
-    const rows = await readRecords('products', { id: productId });
-    const product = rows[0]?.data;
-    if (!product || product.isAvailable === false) return res.status(400).json({ error: 'An item is no longer available.' });
     const price = Number(product.price);
-    if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'An item has an invalid price.' });
     const lineTotal = price * quantity;
     subtotal += lineTotal;
     lines.push({ id: crypto.randomUUID(), productId, name: product.name, qty: quantity, quantity, price, subtotal: lineTotal });
   }
-  const settings = await readRecords('settings', { id: 'general' });
-  const taxRate = Math.max(0, Number(settings[0]?.data?.taxRate || 0));
-  const tax = subtotal * taxRate / 100;
+  const settings = readRecords('settings', { id: 'general' })[0]?.data || {};
+  const tax = subtotal * Math.max(0, Number(settings.taxRate) || 0) / 100;
   const tip = Math.max(0, Number(req.body.tip) || 0);
-  const orderId = validRecordId(req.body.clientWriteId);
-  const order = {
-    id: orderId, table: String(req.body.table || '').slice(0, 40),
-    guests: Math.max(1, Math.min(100, Number(req.body.guests || 1))),
-    customer: String(req.body.customer || '').slice(0, 120), customerId: req.user.role === 'customer' ? req.user.id : null,
-    waiterId: req.user.role === 'customer' ? null : req.user.id,
-    waiterName: String(req.user.user_metadata?.full_name || req.user.email || '').slice(0, 120),
-    status: 'pending', paymentStatus: 'pending',
-    paymentMethod: ['cash','card','mpesa','stripe'].includes(req.body.paymentMethod) ? req.body.paymentMethod : 'cash',
-    subtotal, tax, tip, total: subtotal + tax + tip, currency: 'KES',
-    rating: Math.max(0, Math.min(5, Number(req.body.rating) || 0)),
-    feedback: String(req.body.feedback || '').slice(0, 2000),
-    feedbackImageUrl: String(req.body.feedbackImageUrl || '').slice(0, 2000),
-    createdAt: new Date().toISOString(), lines
-  };
-  await writeRecord('orders', orderId, order, req.user.id);
-  return res.status(201).json({ success: true, id: orderId, orderId, order, lines, synced: true });
-}));
-
-app.patch('/api/orders/:id/payment', requireAuth, allowRoles('cashier','supervisor','manager','admin'), asyncRoute(async (req, res) => {
-  const rows = await readRecords('orders', { id: req.params.id });
-  if (!rows.length) return res.status(404).json({ error: 'Order not found.' });
-  if (rows[0].data.paymentStatus === 'paid') return res.status(409).json({ error: 'This order is already paid.' });
-  await writeRecord('orders', req.params.id, { ...rows[0].data, status: 'paid', paymentStatus: 'paid',
-    paymentMethod: req.body?.paymentMethod || 'cash', paidAt: new Date().toISOString() }, rows[0].owner_id);
+  const id = validRecordId(req.body.clientWriteId);
+  const role = req.user?.role || 'customer';
+  const order = { id, table: String(req.body.table || '').slice(0, 40), guests: Math.max(1, Math.min(100, Number(req.body.guests || 1))),
+    customer: String(req.body.customer || (req.user?.user_metadata.full_name || '')).slice(0, 120), customerId: role === 'customer' ? req.user?.id || null : null,
+    waiterId: role === 'customer' ? null : req.user.id,
+    waiterName: String(req.user?.user_metadata.full_name || req.user?.email || 'Guest customer').slice(0, 120),
+    status: 'pending', paymentStatus: 'pending', paymentMethod: ['cash','card','mpesa','stripe'].includes(req.body.paymentMethod) ? req.body.paymentMethod : 'cash',
+    subtotal, tax, tip, total: subtotal + tax + tip, currency: 'KES', rating: Math.max(0, Math.min(5, Number(req.body.rating) || 0)),
+    feedback: String(req.body.feedback || '').slice(0, 2000), feedbackImageUrl: String(req.body.feedbackImageUrl || '').slice(0, 2000),
+    createdAt: new Date().toISOString(), lines };
+  writeRecord('orders', id, order, req.user?.id || null);
+  return jsonResponse(res, 201, { success: true, id, orderId: id, order, lines, synced: true });
+});
+app.patch('/api/orders/:id/payment', requireAuth, allowRoles('cashier','supervisor','manager','admin'), (req, res) => {
+  const row = readRecords('orders', { id: req.params.id })[0];
+  if (!row) return jsonResponse(res, 404, { error: 'Order not found.' });
+  if (row.data.paymentStatus === 'paid') return jsonResponse(res, 409, { error: 'This order is already paid.' });
+  writeRecord('orders', req.params.id, { ...row.data, status: 'paid', paymentStatus: 'paid', paymentMethod: req.body?.paymentMethod || 'cash', paidAt: new Date().toISOString() }, row.owner_id);
   return res.json({ success: true });
-}));
-
-app.patch('/api/orders/:id/archive', requireAuth, allowRoles('manager','admin'), asyncRoute(async (req, res) => {
-  const rows = await readRecords('orders', { id: req.params.id });
-  if (!rows.length) return res.status(404).json({ error: 'Order not found.' });
-  await writeRecord('orders', req.params.id, { ...rows[0].data, archivedAt: new Date().toISOString() }, rows[0].owner_id);
+});
+app.patch('/api/orders/:id/archive', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const row = readRecords('orders', { id: req.params.id })[0];
+  if (!row) return jsonResponse(res, 404, { error: 'Order not found.' });
+  writeRecord('orders', req.params.id, { ...row.data, archivedAt: new Date().toISOString() }, row.owner_id);
   return res.json({ success: true });
-}));
-
-app.post('/api/messages', requireAuth, allowRoles('waiter','cashier','supervisor','manager','admin'), asyncRoute(async (req, res) => {
+});
+app.post('/api/messages', requireAuth, allowRoles('waiter','cashier','supervisor','manager','admin'), (req, res) => {
   const text = String(req.body?.text || '').trim();
-  if (!text || text.length > 4000) return res.status(400).json({ error: 'Message must contain 1 to 4000 characters.' });
+  if (!text || text.length > 4000) return jsonResponse(res, 400, { error: 'Message must contain 1 to 4000 characters.' });
   const id = validRecordId(req.body?.clientWriteId);
-  const team = String(req.body?.team || 'Front of House').slice(0, 80);
-  const data = { id, team, text, message: text, read: false, fromUid: req.user.id,
-    fromName: String(req.user.user_metadata?.full_name || req.user.email || 'Staff').slice(0, 120), createdAt: new Date().toISOString() };
-  await writeRecord('messages', id, data, req.user.id);
-  return res.status(201).json({ success: true, id, data });
-}));
-
-app.post('/api/products', requireAuth, allowRoles('manager','admin'), asyncRoute(async (req, res) => {
-  const name = String(req.body?.name || '').trim();
-  const price = Number(req.body?.price);
-  const categoryId = String(req.body?.categoryId || '');
-  if (!name || !categoryId || !Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'Name, category, and a non-negative price are required.' });
-  const id = validRecordId(req.body?.clientWriteId);
-  const data = { ...req.body, id, name, price, categoryId, isAvailable: req.body.isAvailable !== false,
-    createdAt: new Date().toISOString() };
-  await writeRecord('products', id, data, req.user.id);
-  return res.status(201).json({ success: true, id });
-}));
-app.put('/api/products/:id', requireAuth, allowRoles('manager','admin'), asyncRoute(async (req, res) => {
-  const rows = await readRecords('products', { id: req.params.id });
-  if (!rows.length) return res.status(404).json({ error: 'Product not found.' });
-  await writeRecord('products', req.params.id, { ...rows[0].data, ...req.body, id: req.params.id }, rows[0].owner_id);
+  const data = { id, team: String(req.body?.team || 'Front of House').slice(0, 80), text, message: text,
+    read: false, fromUid: req.user.id, fromName: String(req.user.user_metadata.full_name || req.user.email || 'Staff').slice(0, 120), createdAt: new Date().toISOString() };
+  writeRecord('messages', id, data, req.user.id);
+  return jsonResponse(res, 201, { success: true, id, data });
+});
+app.post('/api/products', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const name = String(req.body?.name || '').trim(), price = Number(req.body?.price), categoryId = String(req.body?.categoryId || '');
+  if (!name || !categoryId || !Number.isFinite(price) || price < 0) return jsonResponse(res, 400, { error: 'Name, category, and a non-negative price are required.' });
+  const id = validRecordId(req.body.clientWriteId);
+  writeRecord('products', id, { ...req.body, id, name, price, categoryId, isAvailable: req.body.isAvailable !== false, createdAt: new Date().toISOString() }, req.user.id);
+  return jsonResponse(res, 201, { success: true, id });
+});
+app.put('/api/products/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const previous = readRecords('products', { id: req.params.id })[0];
+  if (!previous) return jsonResponse(res, 404, { error: 'Product not found.' });
+  writeRecord('products', req.params.id, { ...previous.data, ...req.body, id: req.params.id }, null);
   return res.json({ success: true, id: req.params.id });
-}));
-app.delete('/api/products/:id', requireAuth, allowRoles('manager','admin'), asyncRoute(async (req, res) => {
-  const { error } = await service.from('app_records').delete().eq('collection_path', 'products').eq('id', req.params.id);
-  if (error) throw error;
+});
+app.put('/api/settings/general', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const data = { id: 'general', hotelName: String(req.body?.hotelName || 'HOTELI POA').slice(0, 120), currency: 'KES', taxRate: Math.max(0, Math.min(100, Number(req.body?.taxRate) || 0)) };
+  writeRecord('settings', 'general', data);
   return res.json({ success: true });
-}));
-
-app.put('/api/settings/general', requireAuth, allowRoles('manager','admin'), asyncRoute(async (req, res) => {
-  const data = { id: 'general', hotelName: String(req.body?.hotelName || 'HOTELI POA').slice(0, 120), currency: 'KES',
-    taxRate: Math.max(0, Math.min(100, Number(req.body?.taxRate) || 0)) };
-  await writeRecord('settings', 'general', data);
-  return res.json({ success: true });
-}));
-app.patch('/api/profile', requireAuth, asyncRoute(async (req, res) => {
+});
+app.patch('/api/profile', requireAuth, (req, res) => {
   const name = String(req.body?.name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
-  if (!name) return res.status(400).json({ error: 'A profile name is required.' });
-  const { error: authError } = await service.auth.admin.updateUserById(req.user.id, {
-    user_metadata: { ...req.user.user_metadata, full_name: name, phone: String(req.body.phone || '').slice(0, 40),
-      avatar_url: String(req.body.photoURL || '').slice(0, 2000) }
-  });
-  if (authError) throw authError;
-  const data = { id: req.user.id, name, email: req.user.email || '', phone: req.body.phone || '',
-    photoURL: req.body.photoURL || '', role: req.user.role, status: 'active', updatedAt: new Date().toISOString() };
-  await writeRecord('users', req.user.id, data, req.user.id);
-  return res.json({ success: true, profile: data });
-}));
+  if (!name) return jsonResponse(res, 400, { error: 'A profile name is required.' });
+  const phone = String(req.body?.phone || '').slice(0, 40), photoURL = String(req.body?.photoURL || '').slice(0, 2000);
+  db.prepare('UPDATE auth_users SET name=?, phone=?, photo_url=? WHERE id=?').run(name, phone, photoURL, req.user.id);
+  const updated = db.prepare('SELECT * FROM auth_users WHERE id=?').get(req.user.id);
+  const user = userSummary(updated);
+  const profile = { id: req.user.id, name, email: req.user.email, phone, photoURL, role: req.user.role, status: 'active', updatedAt: new Date().toISOString() };
+  writeRecord('users', req.user.id, profile, req.user.id);
+  return res.json({ success: true, user, profile });
+});
 
-app.post('/api/createStripeCheckoutSession', requireAuth, asyncRoute(async (req, res) => {
-  if (!process.env.STRIPE_SECRET_KEY) return res.status(503).json({ error: 'Stripe is not configured.' });
-  const orderId = String(req.body?.orderId || '');
-  const rows = await readRecords('orders', { id: orderId });
-  const row = rows[0];
-  if (!row) return res.status(404).json({ error: 'Order not found.' });
-  const staff = ['waiter','cashier','supervisor','manager','admin'].includes(req.user.role);
-  if (!staff && row.data.customerId !== req.user.id) return res.status(403).json({ error: 'This order does not belong to you.' });
-  if (row.data.paymentStatus === 'paid' || Number(row.data.total) <= 0) return res.status(400).json({ error: 'Order is not payable.' });
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-  const siteUrl = String(process.env.SITE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment', line_items: [{ price_data: { currency: 'kes', unit_amount: Math.round(Number(row.data.total) * 100),
-      product_data: { name: `HOTELI POA order ${orderId.slice(0, 8)}` } }, quantity: 1 }],
-    client_reference_id: orderId, metadata: { orderId, userId: req.user.id },
-    success_url: `${siteUrl}/app/#orders`, cancel_url: `${siteUrl}/app/#pos`
-  }, { idempotencyKey: `hotel-pos-${orderId}` });
-  await writeRecord('orders', orderId, { ...row.data, stripeSessionId: session.id }, row.owner_id);
-  return res.json({ url: session.url });
-}));
+app.post(['/api/createStripeCheckoutSession', '/api/initiateMpesaPayment'], (_req, res) =>
+  jsonResponse(res, 501, { error: 'External payments are disabled in the free SQLite demo.' }));
 
-const mpesaSettings = {
-  shortcode: process.env.MPESA_SHORTCODE || '174379',
-  environment: process.env.MPESA_ENV || 'sandbox'
-};
-function mpesaHost() { return mpesaSettings.environment === 'sandbox' ? 'sandbox' : 'api'; }
-async function getMpesaToken() {
-  if (!process.env.MPESA_CONSUMER_KEY || !process.env.MPESA_CONSUMER_SECRET) throw new Error('M-Pesa credentials are not configured.');
-  const credentials = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
-  const { data } = await axios.get(`https://${mpesaHost()}.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials`, {
-    headers: { Authorization: `Basic ${credentials}` }, timeout: 15000
-  });
-  return data.access_token;
-}
-app.post('/api/initiateMpesaPayment', requireAuth, asyncRoute(async (req, res) => {
-  if (!process.env.MPESA_PASSKEY) return res.status(503).json({ error: 'M-Pesa is not configured.' });
-  const phoneNumber = String(req.body?.phoneNumber || '');
-  const orderId = String(req.body?.orderId || '');
-  if (!/^2547\d{8}$/.test(phoneNumber) || !orderId) return res.status(400).json({ error: 'Valid phone number and order ID required.' });
-  const rows = await readRecords('orders', { id: orderId });
-  const row = rows[0];
-  if (!row) return res.status(404).json({ error: 'Order not found.' });
-  const staff = ['waiter','cashier','supervisor','manager','admin'].includes(req.user.role);
-  if (!staff && row.data.customerId !== req.user.id) return res.status(403).json({ error: 'This order does not belong to you.' });
-  const amount = Math.round(Number(row.data.total));
-  if (!Number.isInteger(amount) || amount <= 0 || row.data.paymentStatus === 'paid') return res.status(400).json({ error: 'Order is not payable.' });
-  const token = await getMpesaToken();
-  const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-  const password = Buffer.from(`${mpesaSettings.shortcode}${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
-  const base = `https://${mpesaHost()}.safaricom.co.ke/mpesa/stkpush/v1/processrequest`;
-  const callback = `${String(process.env.SITE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '')}/api/mpesa-callback`;
-  const { data } = await axios.post(base, {
-    BusinessShortCode: mpesaSettings.shortcode, Password: password, Timestamp: timestamp,
-    TransactionType: 'CustomerPayBillOnline', Amount: amount, PartyA: phoneNumber,
-    PartyB: mpesaSettings.shortcode, PhoneNumber: phoneNumber, CallBackURL: callback,
-    AccountReference: orderId.slice(0, 12), TransactionDesc: 'HOTELI POA'
-  }, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
-  const payment = { orderId, userId: req.user.id, checkoutRequestId: data.CheckoutRequestID,
-    status: 'pending', createdAt: new Date().toISOString() };
-  await writeRecord('mpesa_payments', crypto.randomUUID(), payment, req.user.id);
-  return res.json({ success: true, message: 'STK Push sent. Check your phone.' });
-}));
-app.post('/api/mpesa-callback', asyncRoute(async (req, res) => {
-  const callback = req.body?.Body?.stkCallback;
-  if (!callback?.CheckoutRequestID) return res.status(400).send('Invalid callback.');
-  const { data: payment, error } = await service.from('app_records').select('id,owner_id,data')
-    .eq('collection_path', 'mpesa_payments').eq('data->>checkoutRequestId', callback.CheckoutRequestID).maybeSingle();
-  if (error) throw error;
-  if (!payment) return res.status(404).send('Payment not found.');
-  const paid = Number(callback.ResultCode) === 0;
-  await writeRecord('mpesa_payments', payment.id, { ...payment.data, status: paid ? 'paid' : 'failed', resultCode: callback.ResultCode }, payment.owner_id);
-  if (paid) {
-    const orders = await readRecords('orders', { id: payment.data.orderId });
-    if (orders.length) await writeRecord('orders', payment.data.orderId, { ...orders[0].data,
-      status: 'paid', paymentStatus: 'paid', paymentMethod: 'mpesa', paidAt: new Date().toISOString() }, orders[0].owner_id);
-  }
-  return res.status(200).send('OK');
-}));
+// TODO: Re-enable Firebase only behind an explicit feature flag after the SQLite demo.
+if (process.env.USE_FIREBASE === 'true') console.warn('USE_FIREBASE is ignored; Firebase has no active adapter.');
 
-// Render serves the POS pages and API from one origin.
-app.get(['/','/index.html','/auth.html'], (_req, res) => res.sendFile(path.join(webRoot, 'auth.html')));
+await ensureDemoStaffAccounts();
+
+app.get(['/','/index.html','/auth.html'], (_req, res) => res.sendFile(path.join(webRoot, 'app/index.html')));
 app.get(['/app','/app/'], (_req, res) => res.sendFile(path.join(webRoot, 'app/index.html')));
 app.use(express.static(webRoot, { index: false, maxAge: '1h' }));
-
 app.use((error, _req, res, _next) => {
   console.error('Request failed:', error?.message || error);
   if (res.headersSent) return;
-  res.status(error.status || 500).json({ error: error.status ? error.message : 'The request could not be completed.' });
+  return res.status(error.status || 500).json({ error: error.status ? error.message : 'The request could not be completed.' });
 });
 
-app.listen(port, () => console.log(`HOTELI POA Supabase service listening on ${port}`));
+app.listen(port, () => console.log(`HOTELI POA SQLite demo listening on ${port}; database ${process.env.DB_PATH || './hoteli_poa.db'}`));

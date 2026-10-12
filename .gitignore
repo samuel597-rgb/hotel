@@ -9,3 +9,8 @@ build/
 firebase-service-account*.json
 serviceAccountKey.json
 *.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*

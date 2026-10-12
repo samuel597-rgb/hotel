@@ -1,12 +1,10 @@
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY . .
-RUN mkdir -p /data && chown -R node:node /app /data
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV SQLITE_PATH=/data/hoteli_poa.db
-USER node
+ENV DB_PATH=/tmp/hoteli_poa.db
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "server/index.js"]

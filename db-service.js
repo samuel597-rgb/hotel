@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc } from './supabase-data.js';
+import { doc, getDoc, setDoc } from './local-data.js';
 
 export async function saveUserProfile(user) {
   if (!user?.uid) throw new Error('A signed-in user is required to save a profile.');

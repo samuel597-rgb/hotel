@@ -2,6 +2,11 @@
 node_modules
 functions/node_modules
 *.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
 .env
 .env.*
 serviceAccount*.json

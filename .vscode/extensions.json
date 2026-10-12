@@ -1,5 +1,6 @@
 {
     "recommendations": [
-        "akash-cx.blackbox-debug"
+        "akash-cx.blackbox-debug",
+        "ollama.ollama"
     ]
 }

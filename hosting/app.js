@@ -1,15 +1,13 @@
-import { auth } from './supabase.js';
-import { db, functions, storage } from './supabase-data.js';
+import { apiRequest, auth, setSession } from './local-api.js';
+import { db, storage } from './local-data.js';
 import { toast, printReceipt, printThermal, downloadReceiptPDF } from './receipt.js';
 import { onAuthStateChanged, signOut, updateProfile, sendPasswordResetEmail }
-  from './supabase-auth.js';
+  from './local-auth.js';
 import {
   collection, getDocs, getDoc, setDoc, addDoc, updateDoc, deleteDoc, doc,
   query, orderBy, where, serverTimestamp, onSnapshot, limit
-} from './supabase-data.js';
-import { storageRef, uploadBytes, getDownloadURL } from './supabase-data.js';
-import { httpsCallable }
-  from './supabase-data.js';
+} from './local-data.js';
+import { storageRef, uploadBytes, getDownloadURL } from './local-data.js';
 import { applyAppearance as applySettingsAppearance } from './settings-behaviors.js';
 import {
   loadSettings as loadUserSettings, saveSettings as saveUserSettings,
@@ -54,8 +52,7 @@ window.addEventListener('online', flushOfflineWrites);
 
 async function backendRequest(path, method = 'POST', body) {
   const user = auth.currentUser;
-  if (!user) throw new Error('Please sign in again to continue.');
-  const token = await user.getIdToken();
+  const token = user ? await user.getIdToken() : '';
   const requestBody = ['POST', 'PUT', 'PATCH'].includes(method) && body && !body.clientWriteId
     ? { ...body, clientWriteId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}` }
     : body;
@@ -64,7 +61,7 @@ async function backendRequest(path, method = 'POST', body) {
   try {
     response = await fetch(`${apiBase}${path}`, {
       method,
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
       body: requestBody === undefined ? undefined : JSON.stringify(requestBody)
     });
   } catch (error) {
@@ -97,6 +94,8 @@ window.rootApp = function () {
     user: null, userName: 'Guest', role: 'customer', activeView: 'pos',
     hotelName: "HOTELI POA", taxRate: 0,
     categories: [], products: [],
+    staffLoginOpen: false, staffLoginPortal: 'admin', staffUsername: '', staffPassword: '', staffLoginError: '', staffLoginBusy: false,
+    canInstall: false, installPrompt: null,
     get isManager() { return this.role === 'manager' || this.role === 'admin'; },
     get navItems() {
       if (this.role === 'customer') return [
@@ -138,12 +137,24 @@ window.rootApp = function () {
         else this.activeView = requested === 'pos' || (this.user && ['profile', 'orders'].includes(requested)) ? requested : 'pos';
       };
       window.addEventListener('hashchange', applyHash);
+      window.addEventListener('beforeinstallprompt', event => {
+        event.preventDefault();
+        this.installPrompt = event;
+        this.canInstall = true;
+      });
+      window.addEventListener('appinstalled', () => {
+        this.installPrompt = null;
+        this.canInstall = false;
+      });
 
       onAuthStateChanged(auth, async (u) => {
         if (!u) {
           this.user = null;
-          const emulator = new URLSearchParams(location.search).get('emulator') === 'true' ? '?emulator=true' : '';
-          location.replace(`/auth.html${emulator}`);
+          this.userName = 'Guest';
+          this.role = 'customer';
+          applyHash();
+          this.watchCatalog();
+          this.watchSettings();
           return;
         }
         this.user = u;
@@ -155,6 +166,42 @@ window.rootApp = function () {
         this.watchSettings();
         if (u) flushOfflineWrites();
       });
+    },
+
+    openStaffLogin(portal) {
+      this.staffLoginPortal = portal;
+      this.staffUsername = portal === 'admin' ? 'admin 1' : 'employee 1';
+      this.staffPassword = '';
+      this.staffLoginError = '';
+      this.staffLoginOpen = true;
+    },
+    async installApp() {
+      if (!this.installPrompt) return;
+      await this.installPrompt.prompt();
+      await this.installPrompt.userChoice;
+      this.installPrompt = null;
+      this.canInstall = false;
+    },
+    async submitStaffLogin() {
+      if (this.staffLoginBusy) return;
+      this.staffLoginBusy = true;
+      this.staffLoginError = '';
+      try {
+        const result = await apiRequest('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ username: this.staffUsername, password: this.staffPassword })
+        });
+        const expectedRole = this.staffLoginPortal === 'admin' ? 'admin' : 'waiter';
+        if (result.user?.role !== expectedRole) throw new Error('This account cannot use that login option.');
+        setSession(result.token, result.user);
+        this.staffLoginOpen = false;
+        this.staffPassword = '';
+        location.hash = expectedRole === 'admin' ? '#dashboard' : '#pos';
+      } catch (error) {
+        this.staffLoginError = error.message || 'Sign in failed. Check your username and password.';
+      } finally {
+        this.staffLoginBusy = false;
+      }
     },
 
     watchCatalog() {
@@ -228,9 +275,7 @@ window.posApp = function (root) {
       }).catch(() => {});
     },
     get paymentOptions() {
-      return [
-        {v:'cash', l:'💵 Cash'}, {v:'card', l:'💳 Bank card'}, {v:'mpesa', l:'📱 M-Pesa'}
-      ].filter(method => this.enabledPaymentMethods.includes(method.v));
+      return [{ v: 'cash', l: '💵 Cash / pay on collection' }];
     },
 
     filteredCategories() {
@@ -252,10 +297,7 @@ window.posApp = function (root) {
       if (l) l.qty += qty; else this.cart.push({
         productId: p.id, name: p.name, price: p.price, qty
       });
-      if (!root.user) {
-        sessionStorage.setItem('samsCustomerCart', JSON.stringify(this.cart));
-        location.href = '/auth.html?intent=order';
-      }
+      sessionStorage.setItem('samsCustomerCart', JSON.stringify(this.cart));
     },
     inc(i) { this.cart[i].qty++; },
     dec(i) { if (--this.cart[i].qty <= 0) this.cart.splice(i, 1); },
@@ -280,12 +322,10 @@ window.posApp = function (root) {
 
     openPay() {
       if (!this.cart.length) return;
-      if (!root.user) { sessionStorage.setItem('samsCustomerCart', JSON.stringify(this.cart)); location.href = '/auth.html?intent=order'; return; }
       this.showPay = true;
     },
 
     async finalizeOrder() {
-      if (!root.user) { location.href = '/auth.html?intent=order'; return; }
       this.processing = true;
       try {
         const orderDoc = {
@@ -311,30 +351,8 @@ window.posApp = function (root) {
         }
         if (result.queued) toast('Order saved on this server and queued for sync.', 'info');
 
-        if (this.payMethod === 'card' && !result.queued && !result.clientQueued) {
-          const createCheckout = httpsCallable(functions, 'createStripeCheckoutSession');
-          const checkout = await createCheckout({ orderId });
-          if (!checkout.data?.url) throw new Error('Stripe did not return a checkout link.');
-          window.location.assign(checkout.data.url);
-          return;
-        }
-
-        if (this.payMethod === 'mpesa') {
-          if (result.queued) {
-            toast('Order saved for sync. Start the M-Pesa prompt from Bills after it reconnects.', 'info');
-          } else {
-          const phone = prompt('Enter the customer M-Pesa phone (2547XXXXXXXX):');
-          if (!phone) { toast('Order saved as pending. Select M-Pesa again from Bills to prompt payment.', 'info'); }
-          else {
-            const fn = httpsCallable(functions, 'initiateMpesaPayment');
-            const res = await fn({ phoneNumber: phone, amount: Math.round(orderDoc.total), orderId });
-            toast(res.data.message || 'M-Pesa prompt sent to customer.', 'success');
-          }
-          }
-        }
-
         const savedOrder = { id: orderId, ...orderDoc, lines: result.lines || this.cart };
-        if (this.payMethod !== 'mpesa') toast(`Order ${orderId.slice(0,6)} saved · ${window.ksh(orderDoc.total)}`, 'success');
+        toast(`Order ${orderId.slice(0,6)} saved · ${window.ksh(orderDoc.total)}`, 'success');
         this.showPay = false;
         if (orderDoc.paymentStatus === 'paid' && this.receiptSettings.enabled) {
           setTimeout(() => {
@@ -400,13 +418,7 @@ window.ordersApp = function (root) {
       } catch (error) { toast(error.message, 'error'); }
     },
     async promptMpesa(o) {
-      const phone = prompt('Customer M-Pesa phone (2547XXXXXXXX):');
-      if (!phone) return;
-      try {
-        const fn = httpsCallable(functions, 'initiateMpesaPayment');
-        const result = await fn({ phoneNumber: phone, amount: Math.round(o.total || 0), orderId: o.id });
-        toast(result.data.message || 'M-Pesa prompt sent.', 'success');
-      } catch (error) { toast(error.message, 'error'); }
+      toast('M-Pesa payments are disabled in the free SQLite demo.', 'info');
     },
     timestamp(o) { return (asMillis(o.createdAt) ? asDate(o.createdAt).toLocaleString() : 'Sync pending'); }
   };
