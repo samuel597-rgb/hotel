@@ -1,5 +1,7 @@
 (() => {
   const token=localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token');if(!token){location.replace('/staff');return;}
+  HPApi.request('/staff/me').then(({user})=>{const badge=document.querySelector('#user-badge'),roles={front_desk:'Front Desk',kitchen:'Kitchen',manager:'Manager',employee:'Waiter/Employee'};if(badge)badge.textContent=`${user.name} · ${user.display_role||roles[user.role]||'Staff'}`;}).catch(()=>{});
+  document.querySelector('#logout')?.addEventListener('click',async()=>{try{await HPApi.request('/staff/logout',{method:'POST'});}catch{}localStorage.removeItem('hp_staff_token');sessionStorage.removeItem('hp_staff_token');location.replace('/staff/login.html');});
   let orders=[],filter='live';const terminal=['paid','cancelled','split','merged'];
   const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const live=o=>!terminal.includes(o.status);

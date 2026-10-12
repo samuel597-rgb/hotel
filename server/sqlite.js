@@ -63,6 +63,16 @@ for (const [name,declaration] of Object.entries({ active:'INTEGER NOT NULL DEFAU
   ensureColumn('customers',name,declaration);
 }
 ensureColumn('customers','landmark',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('customers','username','TEXT');
+ensureColumn('customers','avatar_path','TEXT');
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS customers_username_unique ON customers(username COLLATE NOCASE) WHERE username IS NOT NULL AND username<>'';
+  CREATE TABLE IF NOT EXISTS customer_favorites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(customer_id,product_id)
+  );`);
 ensureColumn('order_items','name_snapshot',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('order_items','price_cents_snapshot','INTEGER NOT NULL DEFAULT 0');
 ensureColumn('customer_messages','sender_name',"TEXT NOT NULL DEFAULT ''");

@@ -14,6 +14,8 @@ import authRoutes, { ensureSuperAdmin } from './auth.js';
 import orderRoutes from './orders.js';
 import messageRoutes from './messages.js';
 import adminRoutes from './admin.js';
+import profileRoutes from './profile.js';
+import favoriteRoutes from './customer-favorites.js';
 import streamRoutes from './stream.js';
 import { calculateQuote } from './orders.js';
 import { withTransaction } from './sqlite.js';
@@ -45,6 +47,7 @@ function publishPos(event, data, tableId = null) {
 const staticOrigins = [
   'https://hoteli-pos-api.onrender.com',
   'https://hotel1-cf53.onrender.com',
+  'https://hotel-c5f3.onrender.com',
   'https://hoteli-poa.co.ke',
   'https://www.hoteli-poa.co.ke',
   'http://localhost:3000',
@@ -86,6 +89,8 @@ app.use(authRoutes);
 app.use(orderRoutes);
 app.use(messageRoutes);
 app.use(adminRoutes);
+app.use(profileRoutes);
+app.use(favoriteRoutes);
 
 function bearerToken(req) { return /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')?.[1] || ''; }
 function requireAuth(req, res, next) {
@@ -733,18 +738,20 @@ if (process.env.USE_FIREBASE === 'true') console.warn('USE_FIREBASE is ignored; 
 await ensureDemoStaffAccounts();
 await ensureSuperAdmin();
 
-app.get(['/admin', '/admin/', '/admin/login', '/admin/login/'], (_req, res) => res.redirect(308, '/admin/login.html'));
+app.get(['/admin', '/admin/', '/admin/login', '/admin/login/','/admin/login.html'], (_req, res) => res.redirect(308, '/staff/login.html?role=admin'));
+app.get(['/staff/login','/staff/login/'], (_req,res)=>res.redirect(308,'/staff/login.html'));
 app.get('/staff', (_req, res) => res.sendFile(path.join(webRoot, 'staff/login.html')));
 app.get('/employee', (_req, res) => res.redirect('/app/#pos'));
 app.get('/display', (_req, res) => res.sendFile(path.join(webRoot, 'display.html')));
 app.get(['/','/index.html','/auth.html'], (_req, res) => res.sendFile(path.join(webRoot, 'app/index.html')));
 app.get(['/app','/app/'], (_req, res) => res.sendFile(path.join(webRoot, 'app/index.html')));
 app.use(express.static(webRoot, { index: false, maxAge: '1h' }));
+app.use('/uploads',express.static(uploadsDir,{maxAge:'1d',immutable:true}));
 app.use((error, _req, res, _next) => {
   console.error('Request failed:', error?.message || error);
   if (res.headersSent) return;
   if (error.message?.startsWith('CORS blocked origin:')) return res.status(403).json({ error: error.message });
-  if (error instanceof multer.MulterError) return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'Image must be 5 MB or smaller.' : error.message });
+  if (error instanceof multer.MulterError) return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'Image must be 2 MB or smaller.' : error.message });
   if (error.message?.startsWith('Only JPG')) return res.status(400).json({ error: error.message });
   return res.status(error.status || 500).json({ error: error.status ? error.message : 'The request could not be completed.' });
 });

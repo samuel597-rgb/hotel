@@ -2,6 +2,8 @@
   const token=localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token');
   if(!token){location.replace('/staff');return;}
   let timer=null,stream=null,orders=[];
+  HPApi.request('/staff/me').then(({user})=>{const label={super_admin:'Administrator',admin:'Administrator',manager:'Manager',front_desk:'Front Desk',kitchen:'Kitchen',employee:'Waiter/Employee'};document.querySelector('#user-badge').textContent=`${user.name} · ${user.display_role||label[user.role]||'Staff'}`;}).catch(()=>{});
+  document.querySelector('#logout')?.addEventListener('click',async()=>{try{await HPApi.request('/staff/logout',{method:'POST'});}catch{}localStorage.removeItem('hp_staff_token');sessionStorage.removeItem('hp_staff_token');location.replace('/staff/login.html');});
   const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const age=value=>{const start=new Date(value).getTime();return Number.isFinite(start)?`${Math.max(0,Math.floor((Date.now()-start)/60000))} min`:'';};
   async function load(){try{orders=await HPApi.request('/api/staff/orders');render();document.querySelector('#connection').textContent='Live';}catch(error){document.querySelector('#connection').textContent=error.message;}}

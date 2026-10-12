@@ -1,4 +1,5 @@
 const adminToken=()=>localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token');
+const roleLabel=role=>({super_admin:'Administrator',admin:'Administrator',manager:'Manager',front_desk:'Front Desk',kitchen:'Kitchen',employee:'Waiter/Employee',waiter:'Waiter/Employee',cashier:'Cashier',supervisor:'Supervisor',customer:'Customer'})[role]||'Staff';
 const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 document.addEventListener('DOMContentLoaded',()=>{
   const form=document.querySelector('#login');
@@ -10,6 +11,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
   if(!location.pathname.endsWith('dashboard.html'))return;
   if(!adminToken())location.replace('/admin');
+  HPApi.request('/staff/me').then(({user})=>{const names={super_admin:'Administrator',admin:'Administrator',manager:'Manager',front_desk:'Front Desk',kitchen:'Kitchen',employee:'Waiter/Employee',waiter:'Waiter/Employee',cashier:'Cashier',supervisor:'Supervisor'};document.querySelector('#user-badge').textContent=`${user.name} · ${user.display_role||names[user.role]||'Staff'}`;}).catch(()=>{});
   document.querySelector('#logout')?.addEventListener('click',async()=>{try{await HPApi.request('/staff/logout',{method:'POST'});}catch{}localStorage.removeItem('hp_admin_token');sessionStorage.removeItem('hp_admin_token');location.replace('/admin');});
   document.querySelector('#broadcast')?.addEventListener('submit',async event=>{
     event.preventDefault();const form=event.currentTarget,body=new FormData(form).get('body'),roles=[...form.querySelectorAll('input[name=role]:checked')].map(input=>input.value);
@@ -26,10 +28,14 @@ document.addEventListener('DOMContentLoaded',()=>{
       const [orders,staff,customers,online,audit]=await Promise.all([HPApi.request('/api/admin/orders'),HPApi.request('/api/admin/staff'),HPApi.request('/api/admin/customers'),HPApi.request('/api/admin/online'),HPApi.request('/api/admin/audit')]);
       document.querySelector('#summary').innerHTML=[['Orders',orders.length],['Staff',staff.length],['Customers',customers.length]].map(([label,value])=>`<article class="hp-card card"><span class="hp-muted">${label}</span><strong style="display:block;font-size:2rem">${value}</strong></article>`).join('');
       document.querySelector('#orders').innerHTML=orders.slice(0,12).map(order=>`<article class="hp-card card"><strong>Order #${escapeHtml(String(order.id).slice(0,8))}</strong><p>${escapeHtml(order.customer||'Customer')} · ${escapeHtml(order.status)}</p><p>${order.items.map(item=>`${escapeHtml(item.qty)}× ${escapeHtml(item.name)}`).join(', ')}</p></article>`).join('')||'<p>No orders yet.</p>';
-      document.querySelector('#staff-list').innerHTML=staff.map(member=>`<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--border);padding:8px 0"><span>${escapeHtml(member.name)} · ${escapeHtml(member.role)}${member.active?'':' · inactive'}</span>${member.active?`<button data-deactivate="${member.id}">Deactivate</button>`:''}</div>`).join('')||'<p>No staff accounts.</p>';
-      document.querySelector('#online-list').innerHTML=[...online.staff,...online.customers].map(person=>`<p>${escapeHtml(person.name)} · ${escapeHtml(person.role)} · ${escapeHtml(person.currentPage||'App')}</p>`).join('')||'<p class="hp-muted">Nobody active right now.</p>';
-      document.querySelector('#audit-list').innerHTML=audit.rows.slice(0,12).map(row=>`<p>${escapeHtml(row.actorRole)} · ${escapeHtml(row.action)} · ${escapeHtml(new Date(row.createdAt).toLocaleString())}</p>`).join('')||'<p class="hp-muted">No audit events yet.</p>';
+      document.querySelector('#staff-list').innerHTML=staff.map(member=>`<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--border);padding:8px 0"><span>${escapeHtml(member.name)} · ${escapeHtml(roleLabel(member.role))}${member.active?'':' · inactive'}</span>${member.active?`<button data-deactivate="${member.id}">Deactivate</button>`:''}</div>`).join('')||'<p>No staff accounts.</p>';
+      document.querySelector('#online-list').innerHTML=[...online.staff,...online.customers].map(person=>`<p>${escapeHtml(person.name)} · ${escapeHtml(roleLabel(person.role))} · ${escapeHtml(person.currentPage||'App')}</p>`).join('')||'<p class="hp-muted">Nobody active right now.</p>';
+      document.querySelector('#audit-list').innerHTML=audit.rows.slice(0,12).map(row=>`<p>${escapeHtml(row.actorName||'System')} · ${escapeHtml(roleLabel(row.actorRole))} · ${escapeHtml(row.action)} · ${escapeHtml(new Date(row.createdAt).toLocaleString())}</p>`).join('')||'<p class="hp-muted">No audit events yet.</p>';
     }catch(error){document.querySelector('#error').textContent=error.message;}
   }
-  load();setInterval(load,15000);
+  const alertToggle=document.querySelector('#order-alerts');if(alertToggle){alertToggle.checked=localStorage.getItem('hp_order_alerts')==='1';alertToggle.addEventListener('change',()=>localStorage.setItem('hp_order_alerts',alertToggle.checked?'1':'0'));}
+  document.querySelector('#refresh-orders')?.addEventListener('click',load);
+  let flashing=false,flashTimer=null;function flashTitle(){if(!alertToggle?.checked)return;const original='Admin workspace · HOTELI POA';clearInterval(flashTimer);flashTimer=setInterval(()=>{flashing=!flashing;document.title=flashing?'New order · HOTELI POA':original;},700);setTimeout(()=>{clearInterval(flashTimer);document.title=original;},6000);}
+  const token=adminToken();let fallback=setInterval(load,5000);if(token&&'EventSource'in window){const stream=new EventSource(`/api/stream?token=${encodeURIComponent(token)}&scope=admin`);stream.addEventListener('order.new',()=>{load();flashTitle();});stream.addEventListener('order.status',load);stream.onerror=()=>{stream.close();if(!fallback)fallback=setInterval(load,5000);};}
+  load();
 });

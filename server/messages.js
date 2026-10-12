@@ -37,6 +37,7 @@ router.post('/api/customer/messages', requireCustomer, (req,res) => {
   });
   const message={id,senderType:'customer',senderId:req.customer.id,senderName:req.customer.name,body,createdAt:new Date().toISOString()};
   publish(`customer:${req.customer.id}`,'message',{scope:`customer:${req.customer.id}`,message});
+  publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
   return res.status(201).json(message);
 });
 
@@ -77,6 +78,7 @@ router.post('/api/staff/messages', requireStaff, requireRole(staffRoles), (req,r
     logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'message_send',targetType:'customer_message',targetId:id});
     const message={id,senderType:'staff',senderId:String(req.staff.id),senderName:req.staff.name,body,createdAt:new Date().toISOString()};
     publish(`customer:${threadId}`,'message',{scope:`customer:${threadId}`,message});
+  publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
     return res.status(201).json(message);
   }
   if (threadType === 'broadcast' && !['super_admin','admin'].includes(req.staff.role)) return res.status(403).json({error:'Only admins can broadcast messages.'});
@@ -90,6 +92,7 @@ router.post('/api/staff/messages', requireStaff, requireRole(staffRoles), (req,r
   const message={id,senderId:String(req.staff.id),senderRole:req.staff.role,senderName:req.staff.name,body,createdAt:new Date().toISOString()};
   if(threadType==='thread')publish(`thread:${threadId}`,'message',{scope:`thread:${threadId}`,message});
   if(threadType==='team')publish(`team:${threadId}`,'message',{scope:`team:${threadId}`,message});
+  publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
   return res.status(201).json(message);
 });
 
@@ -117,7 +120,7 @@ router.post('/api/messages/customer', (req,res,next) => {
     const body=clean(req.body?.body);if(!body)return res.status(400).json({error:'Message cannot be empty.'});
     const id=crypto.randomUUID(),customer=actor.customer;
     withTransaction(()=>db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)').run(id,customer.id,'customer',customer.id,customer.name,body));
-    const message={id,senderType:'customer',senderId:customer.id,senderName:customer.name,body,createdAt:new Date().toISOString()};publish(`customer:${customer.id}`,'message',{scope:`customer:${customer.id}`,message});
+    const message={id,senderType:'customer',senderId:customer.id,senderName:customer.name,body,createdAt:new Date().toISOString()};publish(`customer:${customer.id}`,'message',{scope:`customer:${customer.id}`,message});publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
     return res.status(201).json(message);
   }
   const staff=actor.staff;
@@ -131,6 +134,7 @@ router.post('/api/messages/customer', (req,res,next) => {
       .run(id,customerId,staff.role==='admin'||staff.role==='super_admin'?'admin':'staff',String(staff.id),staff.name,body));
     const message={id,senderType:'staff',senderId:String(staff.id),senderName:staff.name,body,createdAt:new Date().toISOString()};
     publish(`customer:${customerId}`,'message',{scope:`customer:${customerId}`,message});
+    publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
     return res.status(201).json(message);
 });
 
@@ -178,7 +182,7 @@ router.post('/api/messages/threads/:id',(req,res,next)=>requireStaff(req,res,()=
   const body=clean(req.body?.body);if(!body)return res.status(400).json({error:'Message cannot be empty.'});
   if(req.staff.role==='kitchen'&&thread.thread_type!=='kitchen')return res.status(403).json({error:'Kitchen staff can only post to kitchen threads.'});
   const id=crypto.randomUUID();withTransaction(()=>db.prepare('INSERT INTO staff_messages(id,thread_type,thread_id,sender_id,sender_role,body) VALUES(?,?,?,?,?,?)').run(id,thread.thread_type,String(thread.id),String(req.staff.id),req.staff.role,body));
-  const message={id,senderId:String(req.staff.id),senderRole:req.staff.role,senderName:req.staff.name,body,createdAt:new Date().toISOString()};publish(`thread:${thread.id}`,'message',{scope:`thread:${thread.id}`,message});
+  const message={id,senderId:String(req.staff.id),senderRole:req.staff.role,senderName:req.staff.name,body,createdAt:new Date().toISOString()};publish(`thread:${thread.id}`,'message',{scope:`thread:${thread.id}`,message});publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
   return res.status(201).json(message);
 })));
 
@@ -197,6 +201,7 @@ router.post('/api/messages/broadcast',requireStaff,requireRole(['super_admin','a
     return messages;
   });
   for(const item of results)publish(`role:${item.role}`,'message',{scope:`role:${item.role}`,message:{...item,body,senderName:req.staff.name}});
+  publish('admin','message',{scope:'admin',message:{id,senderId:String(req.staff.id),senderRole:req.staff.role,senderName:req.staff.name,body,createdAt:new Date().toISOString()}});publish('presence','inbox.update',{scope:'presence'});
   return res.status(201).json({success:true,recipients:results.length});
 });
 

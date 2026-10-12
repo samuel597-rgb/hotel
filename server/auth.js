@@ -10,6 +10,7 @@ const router = express.Router();
 const safeText = value => String(value ?? '').trim();
 const normalizePhone = value => safeText(value).replace(/[^+\d]/g, '').slice(0, 20);
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const customerEmail = value => String(value||'').endsWith('@no-email.hoteli.local')?'':value;
 const attempts = new Map();
 function authRateLimit(req,res,next) {
   const now=Date.now(),ip=String(req.ip||req.socket.remoteAddress||'unknown');
@@ -90,28 +91,31 @@ router.post(['/customer/register', '/api/customer/register'], authRateLimit, asy
   try {
     const name = safeText(req.body?.name).replace(/\s+/g, ' ').slice(0, 120);
     const phone = normalizePhone(req.body?.phone);
-    const email = safeText(req.body?.email).toLowerCase().slice(0, 254);
+    const emailInput = safeText(req.body?.email).toLowerCase().slice(0, 254);
     const password = String(req.body?.password || '');
     const address = safeText(req.body?.address).slice(0, 1000);
     const landmark = safeText(req.body?.landmark).slice(0, 300);
-    if (name.length < 2 || phone.replace(/\D/g, '').length < 7 || !emailPattern.test(email) || password.length < 8 || password.length > 128) {
-      return res.status(400).json({ error: 'Enter a name, valid phone and email, and a password of at least 8 characters.' });
+    if (name.length < 2 || phone.replace(/\D/g, '').length < 7 || (emailInput && !emailPattern.test(emailInput)) || password.length < 8 || password.length > 128) {
+      return res.status(400).json({ error: 'Enter a name, valid phone, optional valid email, and a password of at least 8 characters.' });
     }
     const hash = await hashPassword(password);
     const id = crypto.randomUUID();
+    const token = crypto.randomBytes(24).toString('hex');
     try {
-      withTransaction(()=>db.prepare('INSERT INTO customers(id,name,phone,email,password_hash,salt,address,landmark) VALUES(?,?,?,?,?,?,?,?)')
-        .run(id, name, phone, email, hash.hash, hash.salt, address, landmark));
+      // Existing Render databases have email NOT NULL. Keep that schema add-only and
+      // store a unique internal address when the customer leaves email blank.
+      const email = emailInput || `customer+${id}@no-email.hoteli.local`;
+      withTransaction(()=>{
+        db.prepare('INSERT INTO customers(id,name,phone,email,password_hash,salt,address,landmark) VALUES(?,?,?,?,?,?,?,?)')
+          .run(id, name, phone, email, hash.hash, hash.salt, address, landmark);
+        db.prepare('INSERT INTO customer_sessions(token_hash,customer_id,expires_at) VALUES(?,?,?)').run(tokenDigest(token), id, Date.now() + 30 * 24 * 60 * 60 * 1000);
+        logAction(db, { actorId: id, actorRole: 'customer', action: 'register', targetType: 'customer', targetId: id });
+      });
     } catch (error) {
       if (String(error.code).startsWith('SQLITE_CONSTRAINT') || /UNIQUE constraint failed: customers\.(phone|email)/i.test(String(error.message))) return res.status(409).json({ error: 'That phone number or email is already registered.' });
       throw error;
     }
-    const token = crypto.randomBytes(24).toString('hex');
-    withTransaction(()=>{
-      db.prepare('INSERT INTO customer_sessions(token_hash,customer_id,expires_at) VALUES(?,?,?)').run(tokenDigest(token), id, Date.now() + 30 * 24 * 60 * 60 * 1000);
-      logAction(db, { actorId: id, actorRole: 'customer', action: 'register', targetType: 'customer', targetId: id });
-    });
-    return res.status(201).json({ token, user: { id, name, phone, email, address, landmark, role: 'customer' } });
+    return res.status(201).json({ token, user: { id, name, phone, email: emailInput, address, landmark, role: 'customer' } });
   } catch (error) { return next(error); }
 });
 
@@ -139,7 +143,7 @@ router.post(['/customer/login', '/api/customer/login'], authRateLimit, async (re
       logAction(db, { actorId: customer.id, actorRole: 'customer', action: 'login', targetType: 'customer', targetId: customer.id });
     });
     console.info(trace, 'session created');
-    return res.json({ token, user: { id: customer.id, name: customer.name, phone: customer.phone, email: customer.email, address: customer.address, landmark: customer.landmark, role: 'customer' } });
+    return res.json({ token, user: { id: customer.id, name: customer.name, phone: customer.phone, email: customerEmail(customer.email), address: customer.address, landmark: customer.landmark, role: 'customer' } });
   } catch (error) {
     console.error('[customer-login] failed', { code: error?.code || 'UNKNOWN', message: error?.message || String(error) });
     return next(error);
@@ -155,7 +159,7 @@ router.post(['/customer/forgot-password', '/api/customer/forgot-password'], auth
 
 router.get(['/customer/me', '/api/customer/me'], requireCustomer, (req, res) => {
   const { id, name, phone, email, address, landmark } = req.customer;
-  return res.json({ user: { id, name, phone, email, address, landmark, role: 'customer' } });
+  return res.json({ user: { id, name, phone, email: customerEmail(email), address, landmark, role: 'customer' } });
 });
 
 router.post(['/customer/logout', '/api/customer/logout'], requireCustomer, (req, res) => {
@@ -168,6 +172,7 @@ router.post(['/customer/logout', '/api/customer/logout'], requireCustomer, (req,
 });
 
 router.post('/staff/login', authRateLimit, async (req, res, next) => {
+  let auditStaff = null;
   try {
     const identifier = safeText(req.body?.phone || req.body?.username || req.body?.name).toLowerCase();
     const phone = normalizePhone(identifier);
@@ -182,26 +187,33 @@ router.post('/staff/login', authRateLimit, async (req, res, next) => {
       const user = db.prepare('SELECT password_hash FROM auth_users WHERE id=?').get(staff.auth_user_id);
       if (user) valid = await verifyPassword(req.body?.password ?? req.body?.pin, user.password_hash);
     }
-    if (!staff || !valid) return res.status(401).json({ error: 'Username, phone, or password is incorrect.' });
+    auditStaff = staff;
+    if (!staff || !valid) {
+      withTransaction(()=>logAction(db,{actorId:staff?String(staff.id):null,actorRole:staff?.role||'anonymous',action:'staff.login.failure',targetType:'staff',targetId:staff?.id||identifier}));
+      return res.status(401).json({ error: 'Username, phone, or password is incorrect.' });
+    }
     const token = crypto.randomBytes(24).toString('hex');
     withTransaction(()=>{
       db.prepare('INSERT INTO staff_sessions(token_hash,staff_id,expires_at) VALUES(?,?,?)').run(tokenDigest(token), staff.id, Date.now() + 12 * 60 * 60 * 1000);
-      logAction(db, { actorId: String(staff.id), actorRole: staff.role, action: 'login', targetType: 'staff', targetId: staff.id });
+      logAction(db, { actorId: String(staff.id), actorRole: staff.role, action: 'staff.login', targetType: 'staff', targetId: staff.id });
     });
-    return res.json({ token, role: staff.role, forcePasswordChange: Boolean(staff.force_password_change), user: { id: staff.id, name: staff.name, phone: staff.phone, role: staff.role } });
-  } catch (error) { return next(error); }
+    const displayRoles={super_admin:'Administrator',admin:'Administrator',manager:'Manager',front_desk:'Front Desk',kitchen:'Kitchen',employee:'Waiter/Employee',waiter:'Waiter/Employee',cashier:'Cashier',supervisor:'Supervisor'};
+    return res.json({ token, role: staff.role, forcePasswordChange: Boolean(staff.force_password_change), user: { id: staff.id, name: staff.name, phone: staff.phone, role: staff.role, display_role:displayRoles[staff.role]||'Staff' } });
+  } catch (error) { console.error('[staff-login] failed', { code:error?.code||'UNKNOWN', message:error?.message||String(error), staffId:auditStaff?.id||null }); return next(error); }
 });
 
 router.post('/staff/logout', requireStaff, (req, res) => {
   const token = getToken(req);
-  db.prepare('DELETE FROM staff_sessions WHERE token_hash=?').run(tokenDigest(token));
-  if (req.legacyStaffSession) deleteSession(token);
-  logAction(db, { actorId: String(req.staff.id), actorRole: req.staff.role, action: 'logout', targetType: 'staff', targetId: req.staff.id });
+  withTransaction(()=>{
+    db.prepare('DELETE FROM staff_sessions WHERE token_hash=?').run(tokenDigest(token));
+    if (req.legacyStaffSession) deleteSession(token);
+    logAction(db, { actorId: String(req.staff.id), actorRole: req.staff.role, action: 'logout', targetType: 'staff', targetId: req.staff.id });
+  });
   return res.status(204).end();
 });
 
 router.get('/staff/me', requireStaff, (req, res) => res.json({
-  user: { id: req.staff.id, name: req.staff.name, phone: req.staff.phone, role: req.staff.role },
+  user: { id: req.staff.id, name: req.staff.name, phone: req.staff.phone, role: req.staff.role, display_role:({super_admin:'Administrator',admin:'Administrator',manager:'Manager',front_desk:'Front Desk',kitchen:'Kitchen',employee:'Waiter/Employee',waiter:'Waiter/Employee',cashier:'Cashier',supervisor:'Supervisor'})[req.staff.role]||'Staff' },
   forcePasswordChange: Boolean(req.staff.force_password_change)
 }));
 

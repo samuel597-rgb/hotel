@@ -184,9 +184,7 @@ router.patch('/api/staff/orders/:id/status', requireStaff, requireRole(['super_a
       if(!exists)db.prepare("INSERT INTO staff_threads(thread_type,reference_id,title,created_by) VALUES('kitchen',?,?,?)")
         .run(row.id,`Order #${row.legacy_order_id}${row.table_name?` · ${row.table_name}`:''}`,req.staff.id);
     }
-    logAction(db, { actorId: String(req.staff.id), actorRole: req.staff.role, action: 'order.status.change', targetType: 'order', targetId: row.legacy_order_id, meta: { from: row.status, to: status } });
-    if(status==='cancelled')logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'order.cancel',targetType:'order',targetId:row.legacy_order_id});
-    if(status==='paid')logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'order.paid',targetType:'order',targetId:row.legacy_order_id});
+    logAction(db, { actorId: String(req.staff.id), actorRole: req.staff.role, action: status==='cancelled'?'order.cancel':status==='paid'?'order.paid':'order.status.change', targetType: 'order', targetId: row.legacy_order_id, meta: { from: row.status, to: status } });
     if(status==='paid'&&row.customer_id){const customer=db.prepare('SELECT phone FROM customers WHERE id=?').get(row.customer_id);if(customer)applyLoyalty(row.customer_id,customer.phone,row.id);}
   });
   const updated=orderDetails(db.prepare('SELECT * FROM orders WHERE id=?').get(row.id));
@@ -216,9 +214,9 @@ router.post('/api/customer/orders/:id/cancel',requireCustomer,(req,res)=>{
     db.prepare("UPDATE orders SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(row.id);
     db.prepare("INSERT INTO order_status_history(order_id,status,actor_id,note) VALUES(?,'cancelled',?,'Cancelled by customer')").run(row.id,req.customer.id);
     if(row.table_id)db.prepare("UPDATE tables SET status='available' WHERE id=?").run(row.table_id);
-    logAction(db,{actorId:req.customer.id,actorRole:'customer',action:'order.cancel',targetType:'order',targetId:row.legacy_order_id});
+    logAction(db,{actorId:req.customer.id,actorRole:'customer',action:'customer.order.cancel',targetType:'order',targetId:row.legacy_order_id});
   });
-  const order=orderDetails(db.prepare('SELECT * FROM orders WHERE id=?').get(row.id));publish(`customer:${req.customer.id}`,'order.status',{scope:`customer:${req.customer.id}`,order});publish('presence','order.status',{order});
+  const order=orderDetails(db.prepare('SELECT * FROM orders WHERE id=?').get(row.id));publish(`customer:${req.customer.id}`,'order.status',{scope:`customer:${req.customer.id}`,order});publish('presence','order.status',{order});publish('admin','order.status',{order});publish('kitchen','order.status',{order});
   return res.json(order);
 });
 

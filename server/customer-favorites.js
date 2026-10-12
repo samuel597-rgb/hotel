@@ -1,0 +1,9 @@
+import express from 'express';
+import { db, withTransaction } from './sqlite.js';
+import { requireCustomer } from './auth.js';
+import { logAction } from './audit.js';
+const router=express.Router();
+router.get('/api/customer/favorites',requireCustomer,(req,res)=>res.json(db.prepare(`SELECT COALESCE(NULLIF(p.firestore_id,''),CAST(p.id AS TEXT)) AS id,p.name,p.price_cents AS priceCents,p.price,p.image_url AS imageUrl,p.category_id AS categoryId,f.created_at AS createdAt FROM customer_favorites f JOIN products p ON p.id=f.product_id WHERE f.customer_id=? AND p.active=1 ORDER BY f.created_at DESC`).all(req.customer.id)));
+router.post('/api/customer/favorites/:productId',requireCustomer,(req,res)=>{const publicId=String(req.params.productId||'').slice(0,128),product=db.prepare("SELECT id FROM products WHERE (CAST(id AS TEXT)=? OR firestore_id=?) AND active=1").get(publicId,publicId);if(!product)return res.status(404).json({error:'Product not found.'});withTransaction(()=>{const result=db.prepare('INSERT OR IGNORE INTO customer_favorites(customer_id,product_id) VALUES(?,?)').run(req.customer.id,product.id);if(result.changes)logAction(db,{actorId:req.customer.id,actorRole:'customer',action:'customer.favorite.add',targetType:'product',targetId:publicId});});return res.status(201).json({success:true});});
+router.delete('/api/customer/favorites/:productId',requireCustomer,(req,res)=>{const publicId=String(req.params.productId||'').slice(0,128),product=db.prepare('SELECT id FROM products WHERE CAST(id AS TEXT)=? OR firestore_id=?').get(publicId,publicId);if(!product)return res.status(204).end();withTransaction(()=>{const result=db.prepare('DELETE FROM customer_favorites WHERE customer_id=? AND product_id=?').run(req.customer.id,product.id);if(result.changes)logAction(db,{actorId:req.customer.id,actorRole:'customer',action:'customer.favorite.remove',targetType:'product',targetId:publicId});});return res.status(204).end();});
+export default router;

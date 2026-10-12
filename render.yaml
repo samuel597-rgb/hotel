@@ -14,4 +14,4 @@ services:
       - key: USE_FIREBASE
         value: "false"
       - key: CORS_ORIGINS
-        value: https://hoteli-pos-api.onrender.com,https://samuel597-rgb.github.io
+        value: https://hoteli-pos-api.onrender.com,https://hotel-c5f3.onrender.com,https://samuel597-rgb.github.io

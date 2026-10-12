@@ -117,9 +117,11 @@ router.get('/api/admin/audit',requireStaff,requireRole(managers),(req,res)=>{
   if(action){filters.push('action=?');args.push(action);}
   const page=Math.max(1,Math.min(10000,Number(req.query.page)||1));
   const where=filters.length?`WHERE ${filters.join(' AND ')}`:'';
-  const rows=db.prepare(`SELECT actor_id AS actorId,actor_role AS actorRole,action,target_type AS targetType,
-    target_id AS targetId,meta_json AS metaJson,created_at AS createdAt FROM audit_logs ${where}
-    ORDER BY id DESC LIMIT 50 OFFSET ?`).all(...args,(page-1)*50);
+  const rows=db.prepare(`SELECT a.actor_id AS actorId,a.actor_role AS actorRole,COALESCE(c.name,s.name,'System') AS actorName,a.action,a.target_type AS targetType,
+    a.target_id AS targetId,a.meta_json AS metaJson,a.created_at AS createdAt FROM audit_logs a
+    LEFT JOIN customers c ON a.actor_role='customer' AND c.id=a.actor_id
+    LEFT JOIN staff s ON a.actor_role<>'customer' AND CAST(s.id AS TEXT)=a.actor_id ${where}
+    ORDER BY a.id DESC LIMIT 50 OFFSET ?`).all(...args,(page-1)*50);
   const total=db.prepare(`SELECT COUNT(*) AS count FROM audit_logs ${where}`).get(...args).count;
   return res.json({rows,total,page,pageSize:50});
 });

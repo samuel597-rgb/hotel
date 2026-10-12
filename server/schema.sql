@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS customers (
   name TEXT NOT NULL,
   phone TEXT NOT NULL UNIQUE,
   email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  username TEXT,
+  avatar_path TEXT,
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
   address TEXT NOT NULL DEFAULT '',
@@ -253,6 +255,14 @@ CREATE TABLE IF NOT EXISTS delivery_details (
 );
 CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items(order_id);
+
+CREATE TABLE IF NOT EXISTS customer_favorites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(customer_id,product_id)
+);
 
 INSERT OR IGNORE INTO settings(key,value) VALUES
   ('brand_name','"HOTELI POA"'), ('tax_mode','"included"'), ('tax_rate','16'), ('logo_path','""');

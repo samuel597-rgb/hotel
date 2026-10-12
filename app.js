@@ -134,11 +134,11 @@ async function staffRequest(path, method = 'GET', body) {
 // ═══════════════════════════════════════════════════
 window.rootApp = function () {
   return {
-    user: null, userName: 'Guest', role: 'customer', activeView: 'pos',cartCount:0,
+    user: null, userName: 'Guest', role: 'customer', activeView: 'pos',cartCount:0,favoriteIds:[],unreadMessages:0,messageStream:null,
     hotelName: "HOTELI POA", taxRate: 16, taxMode: 'included',
     categories: [], products: [],
     staffLoginOpen: false, staffLoginPortal: 'admin', staffUsername: '', staffPassword: '', staffLoginError: '', staffLoginBusy: false,
-    customerAuthOpen: false, customerAuthMode: 'login', customerName: '', customerPhone: '', customerEmail: '', customerPassword: '', customerAddress: '', customerLandmark:'', customerAuthError: '', customerAuthBusy: false,
+    customerAuthOpen: false, customerAuthMode: 'login', customerName: '', customerPhone: '', customerEmail: '', customerPassword: '', customerConfirmPassword:'', customerAddress: '', customerLandmark:'', customerAuthError: '', customerAuthBusy: false,
     theme: 'light',
     demoBannerVisible: localStorage.getItem('hp_demo_banner_dismissed') !== '1',
     dismissDemoBanner() { localStorage.setItem('hp_demo_banner_dismissed', '1'); this.demoBannerVisible = false; },
@@ -152,13 +152,13 @@ window.rootApp = function () {
       if (['waiter','front_desk'].includes(this.role)) return [
         {id:'pos', label:'Food & Drinks', icon:'🍽️'},
         {id:'kitchen', label:'Kitchen Display', icon:'🍳'},
-        {id:'messages', label:'Messages', icon:'✉️'}
+        {id:'messages', label:this.unreadMessages?`Messages (${this.unreadMessages})`:'Messages', icon:'✉️'}
       ];
       if (['kitchen','employee'].includes(this.role)) return [{id:'kitchen',label:'Kitchen Display',icon:'🍳'}];
       if (['cashier', 'supervisor'].includes(this.role)) return [
         {id:'pos', label:'Food & Drinks', icon:'🍽️'},
         {id:'orders', label:'Open Bills', icon:'🧾'},
-        {id:'messages', label:'Messages', icon:'✉️'},
+        {id:'messages', label:this.unreadMessages?`Messages (${this.unreadMessages})`:'Messages', icon:'✉️'},
         {id:'profile', label:'Profile', icon:'👤'}
       ];
       const items = [
@@ -172,6 +172,8 @@ window.rootApp = function () {
       if (this.isManager) items.push({id:'products', label:'Products', icon:'📦'}, {id:'floor', label:'Floor & Tables', icon:'🪑'}, ...(this.role === 'admin' ? [] : [{id:'kitchen', label:'Kitchen Display', icon:'🍳'}]));
       return items;
     },
+    async refreshUnreadMessages(){if(!['super_admin','admin','manager','front_desk'].includes(this.role))return;try{const threads=await staffRequest('/api/messages/customer');this.unreadMessages=threads.reduce((total,thread)=>total+Number(thread.unread||0),0);}catch{this.unreadMessages=0;}},
+    watchUnreadMessages(token){this.messageStream?.close();if(!['super_admin','admin','manager','front_desk'].includes(this.role)||!token||!('EventSource'in window))return;this.refreshUnreadMessages();this.messageStream=new EventSource(`/api/stream?token=${encodeURIComponent(token)}&scope=presence`);this.messageStream.addEventListener('inbox.update',()=>this.refreshUnreadMessages());},
 
     catalogUnsubscribers: [], presenceTimer: null,
     async init() {
@@ -215,6 +217,7 @@ window.rootApp = function () {
           const staffToken=localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token')||localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token');
           if(staffToken)staffRequest('/staff/me').then(result=>{
             this.user={...result.user,uid:String(result.user.id),displayName:result.user.name};this.userName=result.user.name;this.role=result.user.role;applyHash();
+            this.watchUnreadMessages(staffToken);
             if(this.role!=='customer'){const sendPresence=()=>staffRequest('/api/staff/presence','POST',{}).catch(()=>{});sendPresence();this.presenceTimer=setInterval(sendPresence,30000);}
           }).catch(()=>{for(const key of ['hp_admin_token','hp_staff_token']){localStorage.removeItem(key);sessionStorage.removeItem(key);}});
           const customerToken = localStorage.getItem('hp_customer_token') || sessionStorage.getItem('hp_customer_token');
@@ -223,6 +226,7 @@ window.rootApp = function () {
             this.userName = result.user.name;
             this.role = 'customer';
             applyHash();
+            customerRequest('/api/customer/favorites').then(rows=>{this.favoriteIds=rows.map(row=>String(row.id));}).catch(()=>{});
           }).catch(() => { localStorage.removeItem('hp_customer_token'); sessionStorage.removeItem('hp_customer_token'); });
           return;
         }
@@ -252,6 +256,7 @@ window.rootApp = function () {
       this.staffLoginOpen = true;
     },
     openCustomerAuth(mode = 'login') { this.customerAuthMode=mode;this.customerAuthError='';this.customerAuthOpen=true; },
+    async toggleFavorite(product){if(!this.user){this.openCustomerAuth('login');return;}const id=String(product.id),exists=this.favoriteIds.includes(id);try{if(exists){await customerRequest(`/api/customer/favorites/${encodeURIComponent(id)}`,'DELETE');this.favoriteIds=this.favoriteIds.filter(value=>value!==id);}else{await customerRequest(`/api/customer/favorites/${encodeURIComponent(id)}`,'POST',{});this.favoriteIds=[...this.favoriteIds,id];}}catch(error){toast(error.message,'error');}},
     async submitCustomerAuth() {
       if(this.customerAuthBusy)return;
       this.customerAuthBusy=true;this.customerAuthError='';
@@ -262,12 +267,13 @@ window.rootApp = function () {
           this.customerAuthError=result.message||'Password reset is not available here. Contact the front desk.';return;
         }
         const registering=this.customerAuthMode==='register';
+        if(registering&&this.customerPassword!==this.customerConfirmPassword){this.customerAuthError='Passwords do not match. Please re-enter.';this.customerPassword='';this.customerConfirmPassword='';setTimeout(()=>document.querySelector('#customer-password')?.focus(),0);return;}
         const result=await customerRequest(registering?'/api/customer/register':'/api/customer/login','POST',registering
-          ?{name:this.customerName,phone:this.customerPhone,email:this.customerEmail,password:this.customerPassword,address:this.customerAddress,landmark:this.customerLandmark}
+          ?{name:this.customerName,phone:this.customerPhone,email:this.customerEmail,password:this.customerPassword,address:this.customerAddress}
           :{phone:this.customerPhone,password:this.customerPassword});
         localStorage.setItem('hp_customer_token',result.token);
         sessionStorage.removeItem('hp_customer_token');
-        this.user={...result.user,uid:result.user.id,displayName:result.user.name};this.userName=result.user.name;this.role='customer';this.customerAuthOpen=false;this.customerPassword='';
+        this.user={...result.user,uid:result.user.id,displayName:result.user.name};this.userName=result.user.name;this.role='customer';this.customerAuthOpen=false;this.customerPassword='';this.customerConfirmPassword='';customerRequest('/api/customer/favorites').then(rows=>{this.favoriteIds=rows.map(row=>String(row.id));}).catch(()=>{});
         location.hash='#pos';
       } catch(error){this.customerAuthError=error.message||'Could not complete sign in.';}
       finally{this.customerAuthBusy=false;}
@@ -334,11 +340,12 @@ window.rootApp = function () {
       }, error => console.warn('Hotel settings unavailable:', error.message));
     },
 
-    goto(view) { location.hash = '#' + view; },
+    goto(view) { if(view==='profile'&&this.role==='customer'){location.href='/app/profile.html';return;}location.hash = '#' + view; },
     async logout() {
       const sessionId = sessionStorage.getItem('hotelPosSessionId');
       if (this.user && sessionId) await endUserSession(this.user.uid, sessionId).catch(() => {});
       sessionStorage.removeItem('hotelPosSessionId');
+      this.messageStream?.close();this.messageStream=null;
       const customerToken=localStorage.getItem('hp_customer_token')||sessionStorage.getItem('hp_customer_token');
       if(customerToken) await customerRequest('/api/customer/logout','POST').catch(()=>{});
       const staffKey=localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token')?'hp_admin_token':'hp_staff_token';
@@ -417,6 +424,7 @@ window.posApp = function (root) {
     selectProduct(p) { this.selectedProduct = p; this.selectedQty = 1; },
 
     addToCart(p, qty = 1) {
+      if(root.role==='customer'&&(!root.user||!(localStorage.getItem('hp_customer_token')||sessionStorage.getItem('hp_customer_token')))){root.openCustomerAuth('login');return;}
       const l = this.cart.find(x => x.productId === p.id);
       if (l) l.qty += qty; else this.cart.push({
         productId: p.id, name: p.name, price: p.discountedPrice ?? p.price, qty
