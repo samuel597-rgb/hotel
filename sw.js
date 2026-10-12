@@ -1,4 +1,4 @@
-const CACHE = 'sams-hotel-sqlite-v5';
+const CACHE = 'sams-hotel-sqlite-v6';
 const APP_CACHE_PREFIX = 'sams-hotel-';
 const ASSETS = [
   '/', '/app/', '/auth.html', '/auth.js', '/styles.css', '/icons/logo-192.png', '/icons/logo-512.png', '/icons/logo-180.png',
@@ -56,7 +56,8 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  if (['/login','/admin','/employee','/display'].includes(url.pathname)) return;
+  if (['/login','/admin','/staff','/employee','/display'].includes(url.pathname)
+      || url.pathname.startsWith('/admin/') || url.pathname.startsWith('/staff/')) return;
 
   // Authentication, order, and private API responses are never cached.
   if (url.pathname.startsWith('/api/') || url.pathname === '/runtime-config.json') return;

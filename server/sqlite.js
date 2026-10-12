@@ -5,6 +5,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import menu from '../menu.js';
+import { toCents, fromCents } from './money.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.resolve(process.env.DB_PATH || path.join(here, '../hoteli_poa.db'));
@@ -13,6 +14,19 @@ fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 export const db = new DatabaseSync(dbPath);
 db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
 db.exec(fs.readFileSync(path.join(here, 'schema.sql'), 'utf8'));
+
+export function withTransaction(work) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result=work();
+    if (result && typeof result.then==='function') throw new TypeError('SQLite transactions must be synchronous.');
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw error;
+  }
+}
 
 function ensureColumn(table, name, declaration) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all();
@@ -29,11 +43,42 @@ ensureColumn('local_records', 'owner_id', 'TEXT');
 ensureColumn('products', 'category_id', 'INTEGER REFERENCES categories(id) ON DELETE SET NULL');
 ensureColumn('products', 'description', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('products', 'discount_percent', 'REAL NOT NULL DEFAULT 0');
+ensureColumn('products', 'price_cents', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('products', 'image_path', 'TEXT');
 ensureColumn('products', 'active', 'INTEGER NOT NULL DEFAULT 1');
 ensureColumn('products', 'created_at', 'TEXT');
 db.exec("UPDATE products SET created_at=CURRENT_TIMESTAMP WHERE created_at IS NULL OR created_at=''");
 ensureColumn('tables', 'display_token', 'TEXT');
+for (const [name,declaration] of Object.entries({
+  customer_id:'TEXT', subtotal_cents:'INTEGER NOT NULL DEFAULT 0', tax_cents:'INTEGER NOT NULL DEFAULT 0',
+  tip_cents:'INTEGER NOT NULL DEFAULT 0', total_cents:'INTEGER NOT NULL DEFAULT 0', delivery_fee_cents:'INTEGER NOT NULL DEFAULT 0', notes:"TEXT NOT NULL DEFAULT ''",
+  updated_at:'TEXT'
+})) ensureColumn('orders',name,declaration);
+ensureColumn('staff','phone',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('staff','active','INTEGER NOT NULL DEFAULT 1');
+ensureColumn('staff','force_password_change','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('staff','last_page',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('staff','last_seen','INTEGER NOT NULL DEFAULT 0');
+for (const [name,declaration] of Object.entries({ active:'INTEGER NOT NULL DEFAULT 1', last_seen:'INTEGER NOT NULL DEFAULT 0', last_page:"TEXT NOT NULL DEFAULT ''" })) {
+  ensureColumn('customers',name,declaration);
+}
+ensureColumn('customers','landmark',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('order_items','name_snapshot',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('order_items','price_cents_snapshot','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('customer_messages','sender_name',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('customer_messages','read_by_customer','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('customer_messages','read_by_staff','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('staff_messages','recipient_role',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('loyalty_accounts','rewards_earned','INTEGER NOT NULL DEFAULT 0');
+db.exec(`UPDATE products SET price_cents=CAST(ROUND(price*100) AS INTEGER) WHERE price_cents=0 AND price<>0;
+  UPDATE orders SET subtotal_cents=CAST(ROUND(subtotal*100) AS INTEGER) WHERE subtotal_cents=0 AND subtotal<>0;
+  UPDATE orders SET tax_cents=CAST(ROUND(tax*100) AS INTEGER) WHERE tax_cents=0 AND tax<>0;
+  UPDATE orders SET tip_cents=CAST(ROUND(tip*100) AS INTEGER) WHERE tip_cents=0 AND tip<>0;
+  UPDATE orders SET total_cents=CAST(ROUND(COALESCE(NULLIF(total,0),total_amount)*100) AS INTEGER) WHERE total_cents=0 AND COALESCE(NULLIF(total,0),total_amount)<>0;
+  UPDATE orders SET updated_at=COALESCE(updated_at,created_at,CURRENT_TIMESTAMP);
+  UPDATE order_items SET name_snapshot=COALESCE(NULLIF(name_snapshot,''),(SELECT name FROM products WHERE products.id=order_items.product_id),'Menu item');
+  UPDATE order_items SET price_cents_snapshot=CAST(ROUND(COALESCE(NULLIF(unit_price,0),price)*100) AS INTEGER) WHERE price_cents_snapshot=0 AND COALESCE(unit_price,price)<>0;`);
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS staff_phone_idx ON staff(phone) WHERE phone!='';");
 const setDisplayToken = db.prepare('UPDATE tables SET display_token=? WHERE id=? AND (display_token IS NULL OR display_token=\'\')');
 for (const table of db.prepare('SELECT id FROM tables WHERE display_token IS NULL OR display_token=\'\'').all()) setDisplayToken.run(crypto.randomBytes(24).toString('base64url'), table.id);
 
@@ -189,6 +234,7 @@ db.exec(`UPDATE categories SET active=0 WHERE NOT EXISTS (
 UPDATE categories SET active=1 WHERE EXISTS (
   SELECT 1 FROM products p WHERE p.category_id=categories.id AND p.active=1 AND p.is_available=1
 );`);
+db.exec('UPDATE products SET price_cents=CAST(ROUND(price*100) AS INTEGER) WHERE price_cents=0 AND price<>0');
 
 db.prepare(`INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)`)
   .run('general', JSON.stringify({ id: 'general', hotelName: 'HOTELI POA', currency: 'KES', taxRate: 16, taxMode: 'included' }));
@@ -197,16 +243,20 @@ const parseJson = value => {
   try { return JSON.parse(value); } catch { return { value }; }
 };
 const externalProductId = row => String(row.firestore_id || row.id);
-const productData = row => ({
-  id: externalProductId(row), name: row.name, price: Number(row.price),
+const productData = row => {
+  const priceCents=Number(row.price_cents)||toCents(row.price||0);
+  const discountBasisPoints=Math.max(0,Math.min(10000,Math.round(Number(row.discount_percent||0)*100)));
+  const discountedCents=Number((BigInt(priceCents)*BigInt(10000-discountBasisPoints)+5000n)/10000n);
+  return {
+  id: externalProductId(row), name: row.name, price: Number(fromCents(priceCents)), priceCents,
   discountPercent: Number(row.discount_percent || 0),
-  discountedPrice: Math.round(Number(row.price) * (1 - Number(row.discount_percent || 0) / 100) * 100) / 100,
+  discountedPrice: Number(fromCents(discountedCents)), discountedPriceCents:discountedCents,
   category: row.category || 'food', department: row.category || 'food',
   categoryId: String(row.category_id || row.sub_category || row.category || 'food'), sub_category: row.sub_category || '',
   description: row.description || '', imagePath: row.image_path || '',
   imageUrl: row.image_path || row.image_url || '', image_url: row.image_path || row.image_url || '',
   isAvailable: row.is_available !== 0 && row.active !== 0
-});
+};};
 
 export function readRecords(collectionPath, { ownerId, id } = {}) {
   if (collectionPath === 'products') {
@@ -233,13 +283,12 @@ export function readRecords(collectionPath, { ownerId, id } = {}) {
     let rows = db.prepare(`SELECT * FROM orders WHERE (? IS NULL OR legacy_order_id=?) ORDER BY created_at DESC`).all(id || null, id || null);
     const normalized = rows.map(row => {
       const lines = db.prepare(`SELECT oi.*, p.name FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.id`).all(row.id)
-        .map(line => ({ id: String(line.id), productId: String(line.product_id || ''), name: line.name || 'Menu item', qty: line.qty || line.quantity || 1,
-          quantity: line.qty || line.quantity || 1, price: Number(line.unit_price || line.price || 0), subtotal: Number(line.unit_price || line.price || 0) * (line.qty || line.quantity || 1), notes: line.notes || '' }));
+        .map(line => { const qty=line.qty || line.quantity || 1;const unitCents=Number(line.price_cents_snapshot)||toCents(line.unit_price||line.price||0);return { id: String(line.id), productId: String(line.product_id || ''), name: line.name_snapshot || line.name || 'Menu item', qty, quantity:qty, price:Number(fromCents(unitCents)), subtotal:Number(fromCents(unitCents*qty)), notes: line.notes || '' }; });
       const stored = db.prepare('SELECT payload,owner_id FROM local_records WHERE collection_name=? AND document_id=?').get('orders', row.legacy_order_id || String(row.id));
       const payload = { ...(stored ? parseJson(stored.payload) : {}), id: row.legacy_order_id || String(row.id), table: row.table_name || '', tableId: row.table_id,
         channel: row.channel || 'dine_in', status: row.status === 'paid' ? 'paid' : row.status || 'new',
-        paymentStatus: row.status === 'paid' ? 'paid' : 'pending', subtotal: Number(row.subtotal || row.total_amount || 0),
-        tax: Number(row.tax || 0), tip: Number(row.tip || 0), total: Number(row.total || row.total_amount || 0),
+        paymentStatus: row.status === 'paid' ? 'paid' : 'pending', subtotal: Number(fromCents(Number(row.subtotal_cents)||toCents(row.subtotal||row.total_amount||0))),
+        tax: Number(fromCents(Number(row.tax_cents)||toCents(row.tax||0))), tip: Number(fromCents(Number(row.tip_cents)||toCents(row.tip||0))), total: Number(fromCents(Number(row.total_cents)||toCents(row.total||row.total_amount||0))),
         customer: row.customer_name || '', waiterId: stored?.owner_id || row.staff_id ? (parseJson(stored?.payload || '{}').waiterId || String(row.staff_id || '')) : null,
         riderName: row.rider_name || '', riderPhone: row.rider_phone || '', createdAt: row.created_at, lines };
       return { id: payload.id, owner_id: stored?.owner_id || null, data: payload };
@@ -265,14 +314,15 @@ export function writeRecord(collectionPath, id, data, ownerId = null) {
     const category = data.categoryId ? db.prepare('SELECT * FROM categories WHERE CAST(id AS TEXT)=? OR name=? COLLATE NOCASE').get(String(data.categoryId), String(data.categoryId)) : null;
     const department = data.category || data.department || (category?.name === 'Drinks' ? 'drinks' : 'food');
     const image = data.image_path || data.imagePath || data.image_url || data.imageUrl || '';
-    if (existing) db.prepare(`UPDATE products SET name=?, price=?, category=?, image_url=?, image_path=?, description=?,
+    const priceCents=toCents(data.price ?? '0');
+    if (existing) db.prepare(`UPDATE products SET name=?, price=?, price_cents=?, discount_percent=?, category=?, image_url=?, image_path=?, description=?,
       sub_category=?, category_id=?, firestore_id=?, is_available=?, active=? WHERE id=?`)
-      .run(data.name || 'Menu item', Number(data.price) || 0, department, image, image || null,
+      .run(data.name || 'Menu item', Number(fromCents(priceCents)), priceCents, Number(data.discountPercent)||0, department, image, image || null,
         data.description || '', category?.name || data.sub_category || data.categoryId || '', category?.id || null,
         key, data.isAvailable === false ? 0 : 1, data.isAvailable === false ? 0 : 1, existing.id);
-    else db.prepare(`INSERT INTO products(name, price, category, image_url, image_path, description, sub_category,
-      category_id, firestore_id, is_available, active) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(data.name || 'Menu item', Number(data.price) || 0, department, image, image || null, data.description || '',
+    else db.prepare(`INSERT INTO products(name, price, price_cents, discount_percent, category, image_url, image_path, description, sub_category,
+      category_id, firestore_id, is_available, active) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(data.name || 'Menu item', Number(fromCents(priceCents)), priceCents, Number(data.discountPercent)||0, department, image, image || null, data.description || '',
         category?.name || data.sub_category || data.categoryId || '', category?.id || null, key,
         data.isAvailable === false ? 0 : 1, data.isAvailable === false ? 0 : 1);
     return;
@@ -288,21 +338,22 @@ export function writeRecord(collectionPath, id, data, ownerId = null) {
     const tableId = data.tableId ? Number(data.tableId) : (tableName ? Number(tableName.replace(/\D/g, '')) || null : null);
     const status = String(data.status || 'new');
     const staffId=data.staffId ? Number(data.staffId) : (data.waiterId ? db.prepare('SELECT id FROM staff WHERE auth_user_id=?').get(String(data.waiterId))?.id || null : null);
+    const subtotalCents=toCents(data.subtotal||0),taxCents=toCents(data.tax||0),tipCents=toCents(data.tip||0),totalCents=toCents(data.total||data.total_amount||0);
     const values = [tableId, String(data.channel || (tableName ? 'dine_in' : 'takeout')), status,
-      Number(data.subtotal || 0), Number(data.tax || 0), Number(data.tip || 0), Number(data.total || data.total_amount || 0),
+      Number(fromCents(subtotalCents)), Number(fromCents(taxCents)), Number(fromCents(tipCents)), Number(fromCents(totalCents)),
       staffId, String(data.riderName || ''), String(data.riderPhone || ''),
-      tableName, Number(data.total || data.total_amount || 0), String(data.customer || data.customer_name || ''), key];
-    if (existing) db.prepare(`UPDATE orders SET table_id=?,channel=?,status=?,subtotal=?,tax=?,tip=?,total=?,staff_id=?,rider_name=?,rider_phone=?,table_name=?,total_amount=?,customer_name=? WHERE id=?`)
-      .run(...values.slice(0, 13), existing.id);
-    else db.prepare(`INSERT INTO orders(table_id,channel,status,subtotal,tax,tip,total,staff_id,rider_name,rider_phone,table_name,total_amount,customer_name,legacy_order_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(...values);
+      tableName, Number(fromCents(totalCents)), String(data.customer || data.customer_name || ''), key];
+    if (existing) db.prepare(`UPDATE orders SET table_id=?,channel=?,status=?,subtotal=?,tax=?,tip=?,total=?,staff_id=?,rider_name=?,rider_phone=?,table_name=?,total_amount=?,customer_name=?,subtotal_cents=?,tax_cents=?,tip_cents=?,total_cents=?,customer_id=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(...values.slice(0, 13),subtotalCents,taxCents,tipCents,totalCents,data.customerId||null,String(data.notes||''),existing.id);
+    else db.prepare(`INSERT INTO orders(table_id,channel,status,subtotal,tax,tip,total,staff_id,rider_name,rider_phone,table_name,total_amount,customer_name,legacy_order_id,subtotal_cents,tax_cents,tip_cents,total_cents,customer_id,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(...values,subtotalCents,taxCents,tipCents,totalCents,data.customerId||null,String(data.notes||''));
     const orderId = existing?.id || db.prepare('SELECT id FROM orders WHERE legacy_order_id=?').get(key).id;
     if (Array.isArray(data.lines)) {
       db.prepare('DELETE FROM order_items WHERE order_id=?').run(orderId);
-      const insertLine = db.prepare('INSERT INTO order_items(order_id,product_id,qty,unit_price,notes,quantity,price) VALUES(?,?,?,?,?,?,?)');
+      const insertLine = db.prepare('INSERT INTO order_items(order_id,product_id,qty,unit_price,notes,quantity,price,name_snapshot,price_cents_snapshot) VALUES(?,?,?,?,?,?,?,?,?)');
       for (const line of data.lines) {
         const product = db.prepare('SELECT id FROM products WHERE CAST(id AS TEXT)=? OR firestore_id=?').get(String(line.productId || ''), String(line.productId || ''));
-        const qty = Number(line.qty || line.quantity || 1), price = Number(line.price || line.unit_price || 0);
-        insertLine.run(orderId, product?.id || null, qty, price, String(line.notes || ''), qty, price);
+        const qty = Number(line.qty || line.quantity || 1), cents=Number.isSafeInteger(line.priceCentsSnapshot)?line.priceCentsSnapshot:toCents(line.price || line.unit_price || 0), price=Number(fromCents(cents));
+        insertLine.run(orderId, product?.id || null, qty, price, String(line.notes || ''), qty, price,String(line.name||'Menu item'),cents);
       }
     }
     db.prepare(`INSERT INTO local_records(collection_name,document_id,payload,updated_at,owner_id)

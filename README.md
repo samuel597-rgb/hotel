@@ -42,8 +42,9 @@ When the frontend and API share the Express host, same-origin API calls work wit
 ## Demo limitations
 
 - Email/password accounts are stored locally with scrypt password hashes. Existing Firebase/Supabase accounts are not imported; create new demo accounts.
+- Customer sessions use a random token stored in `localStorage` as `hp_customer_token`; the API stores only its SHA-256 digest. Customer sessions expire after 30 days. Staff and admin portal sessions use separate localStorage keys.
 - Google, Facebook, phone sign-in, email password reset, profile photo uploads, Stripe, and M-Pesa are disabled in this SQLite-only demo. Product images are local files under `uploads/` and may be lost on ephemeral hosts.
-- The frontend polls the API for changes because SQLite has no hosted realtime service.
+- Messaging and order updates use Server-Sent Events while connected, with five-second polling fallback for chats and order views. SQLite remains the source of truth; the event bus is in-process.
 - `USE_FIREBASE=false` is recorded in `.env.example` and the free Render Blueprint. There are no active Firebase imports, initialization calls, or API requests. Historical source remains under `firebase-backup/` without deployment configuration or credentials.
 
 ## Firebase cleanup and exposed keys

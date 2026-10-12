@@ -9,7 +9,17 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import QRCode from 'qrcode';
-import { db, deleteRecord, deleteSession, findUserByToken, issueSession, readRecords, writeRecord } from './sqlite.js';
+import { db, deleteRecord, deleteSession, findUserByToken, issueSession, readRecords, writeRecord, tokenDigest } from './sqlite.js';
+import authRoutes, { ensureSuperAdmin } from './auth.js';
+import orderRoutes from './orders.js';
+import messageRoutes from './messages.js';
+import adminRoutes from './admin.js';
+import streamRoutes from './stream.js';
+import { calculateQuote } from './orders.js';
+import { withTransaction } from './sqlite.js';
+import { logAction } from './audit.js';
+import { toCents, fromCents } from './money.js';
+import { publish } from './events.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -70,15 +80,32 @@ app.use((req,res,next) => {
 });
 app.options('*',(req,res,next) => isSameOrigin(req) ? res.sendStatus(204) : crossOriginCors(req,res,next));
 app.use(express.json({ limit: '1mb' }));
+app.use(streamRoutes);
+app.use(authRoutes);
+app.use(orderRoutes);
+app.use(messageRoutes);
+app.use(adminRoutes);
 
 function bearerToken(req) { return /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')?.[1] || ''; }
 function requireAuth(req, res, next) {
-  req.user = bearerToken(req) ? findUserByToken(bearerToken(req)) : null;
+  const token=bearerToken(req)||String(req.get('x-auth-token')||'');
+  req.user=token?findUserByToken(token):null;
+  if(!req.user&&token){
+    const staff=db.prepare(`SELECT s.id,s.auth_user_id,s.name,s.role FROM staff_sessions ss JOIN staff s ON s.id=ss.staff_id
+      WHERE ss.token_hash=? AND ss.expires_at>? AND s.active=1`).get(tokenDigest(token),Date.now());
+    if(staff)req.user={id:staff.auth_user_id||String(staff.id),uid:staff.auth_user_id||String(staff.id),email:'',role:staff.role,user_metadata:{full_name:staff.name,phone:'',avatar_url:''}};
+  }
   if (!req.user) return jsonResponse(res, 401, { error: 'Your sign-in session is invalid or expired.' });
   return next();
 }
 function optionalAuth(req, _res, next) {
-  req.user = bearerToken(req) ? findUserByToken(bearerToken(req)) : null;
+  const token=bearerToken(req)||String(req.get('x-auth-token')||'');
+  req.user=token?findUserByToken(token):null;
+  if(!req.user&&token){
+    const staff=db.prepare(`SELECT s.id,s.auth_user_id,s.name,s.role FROM staff_sessions ss JOIN staff s ON s.id=ss.staff_id
+      WHERE ss.token_hash=? AND ss.expires_at>? AND s.active=1`).get(tokenDigest(token),Date.now());
+    if(staff)req.user={id:staff.auth_user_id||String(staff.id),uid:staff.auth_user_id||String(staff.id),email:'',role:staff.role,user_metadata:{full_name:staff.name,phone:'',avatar_url:''}};
+  }
   return next();
 }
 function allowRoles(...roles) {
@@ -401,13 +428,15 @@ function removeProductUpload(value) {
 }
 app.post('/api/products', requireAuth, allowRoles('manager','admin'), productUpload.single('image'), (req, res) => {
   const name = String(req.body?.name || '').trim().slice(0, 120);
-  const price = Number(req.body?.price);
+  let priceCents;
+  try { priceCents=toCents(req.body?.price); } catch { return jsonResponse(res,400,{error:'Enter a valid non-negative price.'}); }
+  const price=Number(fromCents(priceCents));
   const category = categoryLookup(req.body?.category_id || req.body?.categoryId);
   const discount = Math.max(0,Math.min(100,Number(req.body?.discount_percent)||0));
   if (!name || !Number.isFinite(price) || price < 0 || !category) return jsonResponse(res, 400, { error: 'Name, category, and a non-negative price are required.' });
   const imagePath = req.file ? `/uploads/${req.file.filename}` : '';
-  const info = db.prepare(`INSERT INTO products(name,price,category,category_id,sub_category,description,discount_percent,image_path,image_url,is_available,active)
-    VALUES(?,?,?,?,?,?,?,?,?,1,1)`).run(name, price, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
+  const info = db.prepare(`INSERT INTO products(name,price,price_cents,category,category_id,sub_category,description,discount_percent,image_path,image_url,is_available,active)
+    VALUES(?,?,?,?,?,?,?,?,?,?,1,1)`).run(name, price,priceCents, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
     String(req.body?.description || '').slice(0, 2000), discount, imagePath || null, imagePath);
   db.prepare('UPDATE categories SET active=1 WHERE id=?').run(category.id);
   return respondProduct(res, db.prepare('SELECT * FROM products WHERE id=?').get(info.lastInsertRowid), 201);
@@ -416,15 +445,17 @@ app.put('/api/products/:id', requireAuth, allowRoles('manager','admin'), product
   const existing = productRowById(req.params.id);
   if (!existing) return jsonResponse(res, 404, { error: 'Product not found.' });
   const name = String(req.body?.name ?? existing.name).trim().slice(0, 120);
-  const price = req.body?.price == null ? existing.price : Number(req.body.price);
+  let priceCents=Number(existing.price_cents)||toCents(existing.price||0);
+  if(req.body?.price!=null){try{priceCents=toCents(req.body.price);}catch{return jsonResponse(res,400,{error:'Enter a valid non-negative price.'});}}
+  const price=Number(fromCents(priceCents));
   const category = req.body?.category_id || req.body?.categoryId ? categoryLookup(req.body.category_id || req.body.categoryId)
     : db.prepare('SELECT * FROM categories WHERE id=?').get(existing.category_id);
   const discount = req.body?.discount_percent == null ? Number(existing.discount_percent)||0 : Math.max(0,Math.min(100,Number(req.body.discount_percent)||0));
   if (!name || !Number.isFinite(price) || price < 0 || !category) return jsonResponse(res, 400, { error: 'Name, category, and a non-negative price are required.' });
   const imagePath = req.file ? `/uploads/${req.file.filename}` : (String(req.body?.removeImage)==='true' ? '' : (existing.image_path || ''));
   if (req.file || String(req.body?.removeImage)==='true') removeProductUpload(existing.image_path);
-  db.prepare(`UPDATE products SET name=?,price=?,category=?,category_id=?,sub_category=?,description=?,discount_percent=?,image_path=?,image_url=?,active=1,is_available=1 WHERE id=?`)
-    .run(name, price, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
+  db.prepare(`UPDATE products SET name=?,price=?,price_cents=?,category=?,category_id=?,sub_category=?,description=?,discount_percent=?,image_path=?,image_url=?,active=1,is_available=1 WHERE id=?`)
+    .run(name, price,priceCents, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
       String(req.body?.description ?? existing.description ?? '').slice(0, 2000), discount, imagePath || null, imagePath, existing.id);
   db.prepare('UPDATE categories SET active=1 WHERE id=?').run(category.id);
   return respondProduct(res, db.prepare('SELECT * FROM products WHERE id=?').get(existing.id));
@@ -557,52 +588,52 @@ app.get('/api/orders/:id', requireAuth, (req, res) => {
   return res.json({ id: row.id, ...row.data });
 });
 app.post('/api/orders', optionalAuth, (req, res) => {
-  const items = Array.isArray(req.body?.items) ? req.body.items : [];
-  if (!items.length || items.length > 100) return jsonResponse(res, 400, { error: 'An order must contain between 1 and 100 items.' });
-  const lines = [];
-  let subtotal = 0;
-  for (const item of items) {
-    const productId = String(item.productId || item.id || '');
-    const quantity = Number(item.qty ?? item.quantity);
-    const product = readRecords('products', { id: productId })[0]?.data;
-    if (!productId || !Number.isFinite(quantity) || quantity <= 0 || quantity > 1000 || !product || product.isAvailable === false) {
-      return jsonResponse(res, 400, { error: 'An order item, quantity, or availability is invalid.' });
-    }
-    const price = Number(product.discountedPrice ?? product.price);
-    const lineTotal = price * quantity;
-    subtotal += lineTotal;
-    lines.push({ id: crypto.randomUUID(), productId, name: product.name, qty: quantity, quantity, price, subtotal: lineTotal });
-  }
-  const settings = readRecords('settings', { id: 'general' })[0]?.data || {};
-  const taxRate = Math.max(0, Number(settings.taxRate) || 0);
-  const taxMode = settings.taxMode === 'excluded' ? 'excluded' : 'included';
-  const tax = taxMode === 'included' ? subtotal - subtotal / (1 + taxRate / 100) : subtotal * taxRate / 100;
-  const tip = Math.max(0, Number(req.body.tip) || 0);
-  const id = validRecordId(req.body.clientWriteId);
-  const role = req.user?.role || 'customer';
-  const channel = ['dine_in','takeout','delivery'].includes(req.body.channel) ? req.body.channel : (req.body.table ? 'dine_in' : 'takeout');
-  const order = { id, table: String(req.body.table || '').slice(0, 40), tableId: Number(req.body.tableId) || null, channel, guests: Math.max(1, Math.min(100, Number(req.body.guests || 1))),
-    customer: String(req.body.customer || (req.user?.user_metadata.full_name || '')).slice(0, 120), customerId: role === 'customer' ? req.user?.id || null : null,
-    customerPhone:String(req.body.customerPhone||'').replace(/[^+0-9]/g,'').slice(0,20),
-    waiterId: role === 'customer' ? null : req.user.id,
-    waiterName: String(req.user?.user_metadata.full_name || req.user?.email || 'Guest customer').slice(0, 120),
-    status: 'new', paymentStatus: ['cash','card'].includes(req.body.paymentMethod) && req.user?.role !== 'customer' ? 'paid' : 'pending', paymentMethod: ['cash','card','mpesa'].includes(req.body.paymentMethod) ? req.body.paymentMethod : 'cash',
-    subtotal, tax, taxMode, taxRate, tip, total: subtotal + (taxMode === 'included' ? 0 : tax) + tip, currency: 'KES', rating: Math.max(0, Math.min(5, Number(req.body.rating) || 0)),
-    feedback: String(req.body.feedback || '').slice(0, 2000), riderName: String(req.body.riderName || '').slice(0,100), riderPhone: String(req.body.riderPhone || '').slice(0,40),
-    createdAt: new Date().toISOString(), lines };
-  writeRecord('orders', id, order, req.user?.id || null);
-  if(order.paymentStatus==='paid'&&order.customerPhone)order.loyalty=awardLoyaltyStamp(order.customerPhone);
-  if (order.tableId) db.prepare(`UPDATE tables SET status='occupied' WHERE id=?`).run(order.tableId);
-  publishPos('order', { id, status:order.status, total:order.total, table:order.table, channel:order.channel }, order.tableId);
-  return jsonResponse(res, 201, { success: true, id, orderId: id, order, lines, synced: true });
+  const body=req.body||{};
+  if(['subtotal','subtotalCents','tax','taxCents','tip','tipCents','total','totalCents'].some(key=>key in body))
+    return jsonResponse(res,400,{error:'Send product IDs and quantities only. Prices and totals are calculated by the server.'});
+  const channel=['dine_in','takeout','delivery'].includes(body.channel)?body.channel:(body.table?'dine_in':'takeout');
+  let quote;
+  try{quote=calculateQuote(body.items,channel,body.tipPercent);}catch(error){return jsonResponse(res,400,{error:error.message});}
+  const id=crypto.randomUUID(), role=req.user?.role||'customer';
+  const lines=quote.lines.map(line=>({id:crypto.randomUUID(),productId:String(line.productId),name:line.name,qty:line.qty,quantity:line.qty,price:line.priceCents/100,priceCentsSnapshot:line.priceCents,notes:line.notes}));
+  const tableId=channel==='dine_in'?Number(body.tableId)||null:null;
+  const order={id,table:String(body.table||'').slice(0,60),tableId,channel,
+    customer:String(body.customer||(req.user?.user_metadata.full_name||'')).slice(0,120),
+    customerId:role==='customer'?req.user?.id||null:null,
+    waiterId:role==='customer'?null:req.user?.id||null,waiterName:String(req.user?.user_metadata.full_name||req.user?.email||'Staff').slice(0,120),
+    status:'placed',paymentStatus:'pending',paymentMethod:channel==='delivery'?'cash_on_delivery':'pay_at_counter',
+    subtotal:quote.subtotalCents/100,tax:quote.taxCents/100,taxMode:quote.taxMode,taxRate:quote.taxRate,tip:quote.tipCents/100,
+    total:quote.totalCents/100,currency:'KES',notes:String(body.notes||'').slice(0,1000),riderName:'',riderPhone:'',createdAt:new Date().toISOString(),lines};
+  if(channel==='delivery'&&String(body.address||'').trim().length<4)return jsonResponse(res,400,{error:'Enter the delivery address.'});
+  withTransaction(()=>{
+    writeRecord('orders',id,order,req.user?.id||null);
+    const row=db.prepare('SELECT id FROM orders WHERE legacy_order_id=?').get(id);
+    db.prepare('INSERT INTO order_status_history(order_id,status,actor_id,note) VALUES(?,?,?,?)').run(row.id,'placed',req.user?.id||null,'Order submitted');
+    if(channel==='delivery')db.prepare('INSERT INTO delivery_details(order_id,address_text,landmark,notes) VALUES(?,?,?,?)')
+      .run(row.id,String(body.address||'').slice(0,1000),String(body.landmark||'').slice(0,300),String(body.riderNotes||'').slice(0,500));
+    if(tableId)db.prepare("UPDATE tables SET status='occupied' WHERE id=?").run(tableId);
+    logAction(db,{actorId:req.user?.id||null,actorRole:role,action:'order_create',targetType:'order',targetId:id,meta:{channel,totalCents:quote.totalCents}});
+  });
+  publishPos('order',{id,status:order.status,total:order.total,table:order.table,channel},tableId);
+  return jsonResponse(res,201,{success:true,id,orderId:id,order,lines,synced:true});
 });
 app.put('/api/orders/:id/status', requireAuth, allowRoles('waiter','cashier','supervisor','manager','kitchen'), (req, res) => {
   const nextStatus = String(req.body?.status || '');
-  if (!['new','preparing','ready','served','paid','cancelled'].includes(nextStatus)) return jsonResponse(res,400,{error:'Invalid order status.'});
+  const allowedFrom={new:['confirmed','cancelled'],placed:['confirmed','cancelled'],confirmed:['preparing','cancelled'],preparing:['ready','cancelled'],ready:['delivered','out_for_delivery','cancelled'],out_for_delivery:['delivered','cancelled'],delivered:['paid'],paid:[],cancelled:[]};
+  if (!Object.hasOwn(allowedFrom,nextStatus)) return jsonResponse(res,400,{error:'Invalid order status.'});
   const row = readRecords('orders',{id:req.params.id})[0];
   if (!row) return jsonResponse(res,404,{error:'Order not found.'});
+  if(!allowedFrom[row.data.status]?.includes(nextStatus))return jsonResponse(res,400,{error:`Order cannot move from ${row.data.status} to ${nextStatus}.`});
   const order = { ...row.data, status: nextStatus, paymentStatus: nextStatus === 'paid' ? 'paid' : row.data.paymentStatus };
-  writeRecord('orders',req.params.id,order,row.owner_id);
+  withTransaction(()=>{
+    writeRecord('orders',req.params.id,order,row.owner_id);
+    const normalized=db.prepare('SELECT id,customer_id FROM orders WHERE legacy_order_id=?').get(String(req.params.id));
+    if(normalized)db.prepare('INSERT INTO order_status_history(order_id,status,actor_id,note) VALUES(?,?,?,?)').run(normalized.id,nextStatus,String(req.user.id),'Updated from staff workspace');
+    logAction(db,{actorId:String(req.user.id),actorRole:req.user.role,action:'order.status.change',targetType:'order',targetId:req.params.id,meta:{from:row.data.status,to:nextStatus}});
+  });
+  const normalized=db.prepare('SELECT customer_id FROM orders WHERE legacy_order_id=?').get(String(req.params.id));
+  if(normalized?.customer_id)publish(`customer:${normalized.customer_id}`,'order.status',{scope:`customer:${normalized.customer_id}`,order:{id:req.params.id,status:nextStatus}});
+  publish('presence','order.status',{id:req.params.id,status:nextStatus});publish('kitchen','order.status',{id:req.params.id,status:nextStatus});publish('admin','order.status',{id:req.params.id,status:nextStatus});
   publishPos('order', { id:req.params.id, status:order.status, total:order.total, table:order.table, channel:order.channel }, order.tableId);
   return res.json({id:req.params.id,...order});
 });
@@ -647,8 +678,13 @@ app.post('/api/orders/merge',requireAuth,allowRoles('cashier','supervisor','mana
 app.patch('/api/orders/:id/payment', requireAuth, allowRoles('cashier','supervisor','manager'), (req, res) => {
   const row = readRecords('orders', { id: req.params.id })[0];
   if (!row) return jsonResponse(res, 404, { error: 'Order not found.' });
+  if(row.data.status!=='delivered')return jsonResponse(res,400,{error:'An order can be marked paid only after it is delivered.'});
   if (row.data.paymentStatus === 'paid') return jsonResponse(res, 409, { error: 'This order is already paid.' });
-  writeRecord('orders', req.params.id, { ...row.data, status: 'paid', paymentStatus: 'paid', paymentMethod: req.body?.paymentMethod || 'cash', paidAt: new Date().toISOString() }, row.owner_id);
+  withTransaction(()=>{
+    writeRecord('orders', req.params.id, { ...row.data, status: 'paid', paymentStatus: 'paid', paymentMethod: req.body?.paymentMethod || 'cash', paidAt: new Date().toISOString() }, row.owner_id);
+    const normalized=db.prepare('SELECT id,customer_id FROM orders WHERE legacy_order_id=?').get(String(req.params.id));
+    if(normalized){db.prepare("INSERT INTO order_status_history(order_id,status,actor_id,note) VALUES(?,'paid',?,'Payment received')").run(normalized.id,String(req.user.id));logAction(db,{actorId:String(req.user.id),actorRole:req.user.role,action:'order.paid',targetType:'order',targetId:req.params.id});}
+  });
   const loyalty=row.data.customerPhone?awardLoyaltyStamp(row.data.customerPhone):null;
   return res.json({ success: true, loyalty });
 });
@@ -665,6 +701,7 @@ app.post('/api/messages', requireAuth, allowRoles('waiter','cashier','supervisor
   const data = { id, team: String(req.body?.team || 'Front of House').slice(0, 80), text, message: text,
     read: false, fromUid: req.user.id, fromName: String(req.user.user_metadata.full_name || req.user.email || 'Staff').slice(0, 120), createdAt: new Date().toISOString() };
   writeRecord('messages', id, data, req.user.id);
+  publish(`team:${data.team}`,'message',{scope:`team:${data.team}`,message:{id,senderId:data.fromUid,senderName:data.fromName,senderRole:req.user.role,body:text,createdAt:data.createdAt}});
   return jsonResponse(res, 201, { success: true, id, data });
 });
 app.put('/api/settings/general', requireAuth, allowRoles('manager','admin'), (req, res) => {
@@ -693,8 +730,10 @@ app.post(['/api/createStripeCheckoutSession', '/api/initiateMpesaPayment'], (_re
 if (process.env.USE_FIREBASE === 'true') console.warn('USE_FIREBASE is ignored; Firebase has no active adapter.');
 
 await ensureDemoStaffAccounts();
+await ensureSuperAdmin();
 
-app.get('/admin', (_req, res) => res.redirect('/app/#dashboard'));
+app.get('/admin', (_req, res) => res.sendFile(path.join(webRoot, 'admin/login.html')));
+app.get('/staff', (_req, res) => res.sendFile(path.join(webRoot, 'staff/login.html')));
 app.get('/employee', (_req, res) => res.redirect('/app/#pos'));
 app.get('/display', (_req, res) => res.sendFile(path.join(webRoot, 'display.html')));
 app.get(['/','/index.html','/auth.html'], (_req, res) => res.sendFile(path.join(webRoot, 'app/index.html')));

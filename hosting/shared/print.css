@@ -1,0 +1,1 @@
+@media print{body *{visibility:hidden!important}#receipt-print,#receipt-print *{visibility:visible!important}#receipt-print{position:absolute;inset:0 auto auto 0;width:100%;padding:8mm;background:#fff!important;color:#111!important;font:12pt/1.4 monospace!important}nav,aside,header,.no-print,button{display:none!important}@page{size:A5;margin:8mm}}

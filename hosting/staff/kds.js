@@ -1,0 +1,12 @@
+(() => {
+  const token=localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token');
+  if(!token){location.replace('/staff');return;}
+  let timer=null,stream=null,orders=[];
+  const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const age=value=>{const start=new Date(value).getTime();return Number.isFinite(start)?`${Math.max(0,Math.floor((Date.now()-start)/60000))} min`:'';};
+  async function load(){try{orders=await HPApi.request('/api/staff/orders');render();document.querySelector('#connection').textContent='Live';}catch(error){document.querySelector('#connection').textContent=error.message;}}
+  function render(){for(const status of ['new','preparing','ready']){const statuses=status==='new'?['placed','new','confirmed']:[status];document.getElementById(status).innerHTML=orders.filter(order=>statuses.includes(order.status)).map(order=>{const action=order.status==='confirmed'?'<button data-id="'+escapeHtml(order.id)+'" data-status="preparing">Start preparing</button>':order.status==='preparing'?'<button data-id="'+escapeHtml(order.id)+'" data-status="ready">Mark ready</button>':'';return `<article class="ticket"><h3>Order #${escapeHtml(String(order.id).slice(0,8))}</h3><div class="sub">${escapeHtml(order.table||order.channel)} · ${age(order.createdAt)} elapsed</div><ul>${(order.items||[]).map(item=>`<li>${escapeHtml(item.qty)} × ${escapeHtml(item.name)}${item.notes?` — ${escapeHtml(item.notes)}`:''}</li>`).join('')}</ul>${action}</article>`;}).join('')||'<p class="sub">No orders.</p>';}}
+  document.addEventListener('click',async event=>{const button=event.target.closest('button[data-status]');if(!button)return;button.disabled=true;try{await HPApi.request(`/api/staff/orders/${encodeURIComponent(button.dataset.id)}/status`,{method:'PATCH',body:JSON.stringify({status:button.dataset.status})});await load();}catch(error){alert(error.message);button.disabled=false;}});
+  document.querySelector('#logout').addEventListener('click',async()=>{try{await HPApi.request('/staff/logout',{method:'POST'});}catch{}localStorage.removeItem('hp_staff_token');sessionStorage.removeItem('hp_staff_token');location.replace('/staff');});
+  load();stream=new EventSource(`/api/stream?token=${encodeURIComponent(token)}&scope=kitchen`);stream.addEventListener('order.new',load);stream.addEventListener('order.status',load);stream.onerror=()=>{stream.close();stream=null;clearInterval(timer);timer=setInterval(load,5000);};setInterval(render,30000);
+})();

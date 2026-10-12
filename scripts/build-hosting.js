@@ -16,10 +16,15 @@ const files = [
 ];
 
 fs.mkdirSync(path.join(hosting, 'app'), { recursive: true });
+for (const folder of ['shared','staff','admin']) {
+  fs.mkdirSync(path.join(hosting, folder), { recursive: true });
+  fs.cpSync(path.join(root, folder), path.join(hosting, folder), { recursive: true });
+}
 fs.copyFileSync(path.join(root, 'display.html'), path.join(hosting, 'display.html'));
 for (const [source, target] of files) fs.copyFileSync(path.join(root, source), path.join(hosting, target));
-fs.copyFileSync(path.join(root, 'app', 'index.html'), path.join(hosting, 'app', 'index.html'));
+fs.cpSync(path.join(root, 'app'), path.join(hosting, 'app'), { recursive: true });
 fs.mkdirSync(path.join(hosting, 'icons'), { recursive: true });
+fs.cpSync(path.join(root, 'public', 'food'), path.join(hosting, 'food'), { recursive: true });
 for (const icon of ['logo-180.png', 'logo-192.png', 'logo-512.png']) {
   fs.copyFileSync(path.join(root, 'public', 'icons', icon), path.join(hosting, 'icons', icon));
 }

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS products (
   category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
   description TEXT NOT NULL DEFAULT '',
   discount_percent REAL NOT NULL DEFAULT 0,
+  price_cents INTEGER NOT NULL DEFAULT 0,
   image_path TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -54,6 +55,14 @@ CREATE TABLE IF NOT EXISTS orders (
   table_name TEXT NOT NULL DEFAULT '',
   total_amount REAL NOT NULL DEFAULT 0,
   customer_name TEXT NOT NULL DEFAULT '',
+  customer_id TEXT,
+  subtotal_cents INTEGER NOT NULL DEFAULT 0,
+  tax_cents INTEGER NOT NULL DEFAULT 0,
+  tip_cents INTEGER NOT NULL DEFAULT 0,
+  total_cents INTEGER NOT NULL DEFAULT 0,
+  delivery_fee_cents INTEGER NOT NULL DEFAULT 0,
+  notes TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -65,7 +74,9 @@ CREATE TABLE IF NOT EXISTS order_items (
   unit_price REAL NOT NULL DEFAULT 0,
   notes TEXT,
   quantity INTEGER NOT NULL DEFAULT 1,
-  price REAL NOT NULL DEFAULT 0
+  price REAL NOT NULL DEFAULT 0,
+  name_snapshot TEXT NOT NULL DEFAULT '',
+  price_cents_snapshot INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS staff (
@@ -74,6 +85,11 @@ CREATE TABLE IF NOT EXISTS staff (
   name TEXT NOT NULL,
   role TEXT NOT NULL,
   pin_hash TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  force_password_change INTEGER NOT NULL DEFAULT 0,
+  last_page TEXT NOT NULL DEFAULT '',
+  last_seen INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -98,7 +114,17 @@ CREATE TABLE IF NOT EXISTS register_sessions (
 CREATE TABLE IF NOT EXISTS loyalty_accounts (
   phone TEXT PRIMARY KEY,
   stamps INTEGER NOT NULL DEFAULT 0,
+  rewards_earned INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS loyalty_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id TEXT,
+  phone TEXT NOT NULL,
+  order_id INTEGER,
+  event TEXT NOT NULL,
+  delta INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- The singular name is retained for tools that expect the requested product table.
@@ -133,6 +159,97 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE TABLE IF NOT EXISTS staff_presence (
   user_id TEXT PRIMARY KEY REFERENCES auth_users(id) ON DELETE CASCADE,
   last_seen INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS customers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  phone TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  password_hash TEXT NOT NULL,
+  salt TEXT NOT NULL,
+  address TEXT NOT NULL DEFAULT '',
+  landmark TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen INTEGER NOT NULL DEFAULT 0,
+  last_page TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS customer_sessions (
+  token_hash TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS staff_sessions (
+  token_hash TEXT PRIMARY KEY,
+  staff_id INTEGER NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS customer_messages (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  sender_type TEXT NOT NULL CHECK(sender_type IN ('customer','staff','admin')),
+  sender_id TEXT NOT NULL,
+  sender_name TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  read_by_customer INTEGER NOT NULL DEFAULT 0,
+  read_by_staff INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS customer_messages_customer_idx ON customer_messages(customer_id,id);
+CREATE TABLE IF NOT EXISTS staff_threads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_type TEXT NOT NULL,
+  reference_id INTEGER,
+  title TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by INTEGER
+);
+CREATE TABLE IF NOT EXISTS staff_messages (
+  id TEXT PRIMARY KEY,
+  thread_type TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  sender_role TEXT NOT NULL,
+  recipient_role TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  read_at TEXT
+);
+CREATE INDEX IF NOT EXISTS staff_messages_thread_idx ON staff_messages(thread_id,id);
+CREATE TABLE IF NOT EXISTS typing_state (
+  scope TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  actor_name TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY(scope,actor_id)
+);
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_id TEXT,
+  actor_role TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL DEFAULT '',
+  target_id TEXT NOT NULL DEFAULT '',
+  meta_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit_logs(created_at DESC);
+CREATE TABLE IF NOT EXISTS order_status_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  actor_id TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS delivery_details (
+  order_id INTEGER PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+  address_text TEXT NOT NULL,
+  landmark TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  rider_name TEXT NOT NULL DEFAULT '',
+  rider_phone TEXT NOT NULL DEFAULT '',
+  eta_text TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items(order_id);

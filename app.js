@@ -75,7 +75,7 @@ window.addEventListener('load', () => setTimeout(flushOfflineWrites, 1000));
 
 async function backendRequest(path, method = 'POST', body) {
   const user = auth.currentUser;
-  const token = user ? await user.getIdToken() : '';
+  const token = user ? await user.getIdToken() : (localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token')||localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token')||'');
   const requestBody = ['POST', 'PUT', 'PATCH'].includes(method) && body && !body.clientWriteId
     ? { ...body, clientWriteId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}` }
     : body;
@@ -109,28 +109,50 @@ async function backendRequest(path, method = 'POST', body) {
   return result;
 }
 
+async function customerRequest(path, method = 'GET', body) {
+  const token = localStorage.getItem('hp_customer_token') || sessionStorage.getItem('hp_customer_token') || '';
+  const response = await fetch(`${String(window.POS_API_BASE_URL || '').replace(/\/$/, '')}${path}`, {
+    method, headers: { ...(token ? { 'x-auth-token': token } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const result = await response.json().catch(() => ({}));
+  if(response.status===401&&!path.includes('/login')&&!path.includes('/register')){localStorage.removeItem('hp_customer_token');sessionStorage.removeItem('hp_customer_token');location.replace('/app/login.html');}
+  if (!response.ok) throw new Error(result.error || `Request failed (${response.status}).`);
+  return result;
+}
+
+async function staffRequest(path, method = 'GET', body) {
+  const token=localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token')||localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token')||auth.currentUser&&await auth.currentUser.getIdToken();
+  const response=await fetch(`${String(window.POS_API_BASE_URL||'').replace(/\/$/,'')}${path}`,{
+    method,headers:{...(token?{'x-auth-token':token}:{}),...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined
+  });
+  const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||`Request failed (${response.status}).`);return result;
+}
+
 // ═══════════════════════════════════════════════════
 //  ROOT APP — sidebar, routing, auth, shared state
 // ═══════════════════════════════════════════════════
 window.rootApp = function () {
   return {
-    user: null, userName: 'Guest', role: 'customer', activeView: 'pos',
+    user: null, userName: 'Guest', role: 'customer', activeView: 'pos',cartCount:0,
     hotelName: "HOTELI POA", taxRate: 16, taxMode: 'included',
     categories: [], products: [],
     staffLoginOpen: false, staffLoginPortal: 'admin', staffUsername: '', staffPassword: '', staffLoginError: '', staffLoginBusy: false,
+    customerAuthOpen: false, customerAuthMode: 'login', customerName: '', customerPhone: '', customerEmail: '', customerPassword: '', customerAddress: '', customerLandmark:'', customerAuthError: '', customerAuthBusy: false,
+    theme: 'light',
     canInstall: false, installPrompt: null, online: navigator.onLine,
-    get isManager() { return this.role === 'manager' || this.role === 'admin'; },
+    get isManager() { return ['super_admin','manager','admin'].includes(this.role); },
     get navItems() {
       if (this.role === 'customer') return [
         {id:'pos', label:'Food & Drinks', icon:'🍽️'},
         ...(this.user ? [{id:'orders', label:'My Orders', icon:'🧾'}, {id:'profile', label:'Profile', icon:'👤'}] : [])
       ];
-      if (this.role === 'waiter') return [
+      if (['waiter','front_desk'].includes(this.role)) return [
         {id:'pos', label:'Food & Drinks', icon:'🍽️'},
         {id:'kitchen', label:'Kitchen Display', icon:'🍳'},
         {id:'messages', label:'Messages', icon:'✉️'}
       ];
-      if (this.role === 'kitchen') return [{id:'kitchen',label:'Kitchen Display',icon:'🍳'}];
+      if (['kitchen','employee'].includes(this.role)) return [{id:'kitchen',label:'Kitchen Display',icon:'🍳'}];
       if (['cashier', 'supervisor'].includes(this.role)) return [
         {id:'pos', label:'Food & Drinks', icon:'🍽️'},
         {id:'orders', label:'Open Bills', icon:'🧾'},
@@ -151,6 +173,9 @@ window.rootApp = function () {
 
     catalogUnsubscribers: [], presenceTimer: null,
     async init() {
+      this.theme = localStorage.getItem('hp_theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      this.applyTheme();
+      if(new URLSearchParams(location.search).get('customer_login')==='1')this.openCustomerAuth('login');
       // Customer menu is the public start page. Staff views require a staff claim.
       const applyHash = () => {
         const requested = (location.hash || (this.role === 'customer' ? '#pos' : '#dashboard')).slice(1);
@@ -184,6 +209,18 @@ window.rootApp = function () {
           applyHash();
           this.watchCatalog();
           this.watchSettings();
+          const staffToken=localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token')||localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token');
+          if(staffToken)staffRequest('/staff/me').then(result=>{
+            this.user={...result.user,uid:String(result.user.id),displayName:result.user.name};this.userName=result.user.name;this.role=result.user.role;applyHash();
+            if(this.role!=='customer'){const sendPresence=()=>staffRequest('/api/staff/presence','POST',{}).catch(()=>{});sendPresence();this.presenceTimer=setInterval(sendPresence,30000);}
+          }).catch(()=>{for(const key of ['hp_admin_token','hp_staff_token']){localStorage.removeItem(key);sessionStorage.removeItem(key);}});
+          const customerToken = localStorage.getItem('hp_customer_token') || sessionStorage.getItem('hp_customer_token');
+          if (customerToken) customerRequest('/api/customer/me').then(result => {
+            this.user = { ...result.user, uid: result.user.id, displayName: result.user.name };
+            this.userName = result.user.name;
+            this.role = 'customer';
+            applyHash();
+          }).catch(() => { localStorage.removeItem('hp_customer_token'); sessionStorage.removeItem('hp_customer_token'); });
           return;
         }
         this.user = u;
@@ -211,6 +248,29 @@ window.rootApp = function () {
       this.staffLoginError = '';
       this.staffLoginOpen = true;
     },
+    openCustomerAuth(mode = 'login') { this.customerAuthMode=mode;this.customerAuthError='';this.customerAuthOpen=true; },
+    async submitCustomerAuth() {
+      if(this.customerAuthBusy)return;
+      this.customerAuthBusy=true;this.customerAuthError='';
+      try {
+        if(this.customerAuthMode==='forgot') {
+          const contact=this.customerEmail.trim();const payload=contact.includes('@')?{email:contact}:{phone:contact};
+          const result=await fetch(`${String(window.POS_API_BASE_URL||'').replace(/\/$/,'')}/api/customer/forgot-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);return data;});
+          this.customerAuthError='In demo mode, password reset is not available. Contact front desk on WhatsApp 07XX...';return;
+        }
+        const registering=this.customerAuthMode==='register';
+        const result=await customerRequest(registering?'/api/customer/register':'/api/customer/login','POST',registering
+          ?{name:this.customerName,phone:this.customerPhone,email:this.customerEmail,password:this.customerPassword,address:this.customerAddress,landmark:this.customerLandmark}
+          :{phone:this.customerPhone,password:this.customerPassword});
+        localStorage.setItem('hp_customer_token',result.token);
+        sessionStorage.removeItem('hp_customer_token');
+        this.user={...result.user,uid:result.user.id,displayName:result.user.name};this.userName=result.user.name;this.role='customer';this.customerAuthOpen=false;this.customerPassword='';
+        location.hash='#pos';
+      } catch(error){this.customerAuthError=error.message||'Could not complete sign in.';}
+      finally{this.customerAuthBusy=false;}
+    },
+    toggleTheme(){this.theme=this.theme==='dark'?'light':'dark';localStorage.setItem('hp_theme',this.theme);this.applyTheme();},
+    applyTheme(){document.documentElement.dataset.theme=this.theme;document.documentElement.classList.toggle('dark',this.theme==='dark');},
     async installApp() {
       if (!this.installPrompt) return;
       await this.installPrompt.prompt();
@@ -223,17 +283,23 @@ window.rootApp = function () {
       this.staffLoginBusy = true;
       this.staffLoginError = '';
       try {
-        const result = await apiRequest('/api/auth/login', {
-          method: 'POST',
-          body: JSON.stringify({ username: this.staffUsername, password: this.staffPassword })
-        });
+        let result;
+        try { result=await apiRequest('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: this.staffUsername, password: this.staffPassword }) }); }
+        catch { result=null; }
+        let staffSession;
+        try { staffSession=await fetch(`${String(window.POS_API_BASE_URL||'').replace(/\/$/,'')}/api/staff/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:this.staffUsername,phone:this.staffUsername,password:this.staffPassword})}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error||'Sign in failed.');return data;}); }
+        catch(error) { if(!result)throw error; }
         const expectedRole = this.staffLoginPortal === 'admin' ? 'admin' : 'employee';
-        if ((expectedRole === 'admin' && result.user?.role !== 'admin')
-          || (expectedRole === 'employee' && !['waiter','cashier','supervisor','manager','kitchen'].includes(result.user?.role))) throw new Error('This account cannot use that login option.');
-        setSession(result.token, result.user);
+        const activeRole=staffSession?.role||result?.user?.role;
+        if ((expectedRole === 'admin' && !['admin','super_admin'].includes(activeRole))
+          || (expectedRole === 'employee' && ['admin','super_admin','customer'].includes(activeRole))) throw new Error('This account cannot use that login option.');
+        const target=localStorage.getItem('hotelPosRememberMe')==='true'?localStorage:sessionStorage;
+        if(staffSession){const key=['admin','super_admin'].includes(activeRole)?'hp_admin_token':'hp_staff_token';target.setItem(key,staffSession.token);(target===localStorage?sessionStorage:localStorage).removeItem(key);}
+        if(result)setSession(result.token,result.user);
+        else {this.user={...(staffSession.user||{}),uid:String(staffSession.user.id),displayName:staffSession.user.name};this.userName=staffSession.user.name;this.role=staffSession.role;}
         this.staffLoginOpen = false;
         this.staffPassword = '';
-        location.hash = expectedRole === 'admin' ? '#dashboard' : (['cashier','supervisor'].includes(result.user.role) ? '#orders' : '#pos');
+        location.hash = ['admin','super_admin'].includes(activeRole) ? '#dashboard' : activeRole==='kitchen' ? '#kitchen' : '#pos';
       } catch (error) {
         this.staffLoginError = error.message || 'Sign in failed. Check your username and password.';
       } finally {
@@ -270,6 +336,13 @@ window.rootApp = function () {
       const sessionId = sessionStorage.getItem('hotelPosSessionId');
       if (this.user && sessionId) await endUserSession(this.user.uid, sessionId).catch(() => {});
       sessionStorage.removeItem('hotelPosSessionId');
+      const customerToken=localStorage.getItem('hp_customer_token')||sessionStorage.getItem('hp_customer_token');
+      if(customerToken) await customerRequest('/api/customer/logout','POST').catch(()=>{});
+      const staffKey=localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token')?'hp_admin_token':'hp_staff_token';
+      const staffToken=localStorage.getItem(staffKey)||sessionStorage.getItem(staffKey);
+      if(staffToken)await staffRequest('/api/staff/logout','POST').catch(()=>{});
+      localStorage.removeItem('hp_customer_token');sessionStorage.removeItem('hp_customer_token');
+      localStorage.removeItem(staffKey);sessionStorage.removeItem(staffKey);
       await signOut(auth);
       location.hash = '#pos';
       location.reload();
@@ -287,7 +360,8 @@ window.posApp = function (root) {
   return {
     get root() { return root; },
     currentCategory: null, search: '', cart: [], tables: [], selectedProduct: null, selectedQty: 1,
-    order: { table: '', tableId: null, channel: 'takeout', guests: 1, customer: '', customerPhone: '', riderName: '', riderPhone: '', tip: 0, rating: 0, feedback: '' },
+    order: { table: '', tableId: null, channel: 'takeout', guests: 1, customer: '', customerPhone: '', address: '', landmark: '', riderNotes: '', notes: '', riderName: '', riderPhone: '', tip: 0, rating: 0, feedback: '' },
+    tipPercent: 0, quote: { subtotal: 0, tax: 0, tip: 0, total: 0, lines: [] },
     showPay: false, showChannel: false, payMethod: 'cash', processing: false,
     enabledPaymentMethods: ['cash', 'card', 'mpesa'],
     receiptSettings: { enabled: true, autoPrint: false },
@@ -300,10 +374,12 @@ window.posApp = function (root) {
     init() {
       this.refreshTables();
       this.tablesTimer = setInterval(() => this.refreshTables(), 15000);
+      this.refreshQuote();
       try {
         const saved = JSON.parse(sessionStorage.getItem('samsCustomerCart') || '[]');
         if (saved.length) this.cart = saved;
       } catch {}
+      this.updateCartCount();
       window.addEventListener('hp-table-selected', event => { this.order.table=event.detail.label;this.order.tableId=event.detail.id;this.order.channel='dine_in';this.syncDisplay(); });
       try { const table=JSON.parse(sessionStorage.getItem('hpSelectedTable')||'null'); if(table){this.order.table=table.label;this.order.tableId=table.id;this.order.channel='dine_in';sessionStorage.removeItem('hpSelectedTable');} } catch {}
       if (root.user?.displayName) this.order.customer = root.user.displayName;
@@ -343,63 +419,57 @@ window.posApp = function (root) {
         productId: p.id, name: p.name, price: p.discountedPrice ?? p.price, qty
       });
       sessionStorage.setItem('samsCustomerCart', JSON.stringify(this.cart));
+      this.updateCartCount();
+      this.refreshQuote();
       this.syncDisplay();
     },
-    inc(i) { this.cart[i].qty++; this.syncDisplay(); },
-    dec(i) { if (--this.cart[i].qty <= 0) this.cart.splice(i, 1); this.syncDisplay(); },
+    inc(i) { this.cart[i].qty++; this.updateCartCount(); this.refreshQuote(); this.syncDisplay(); },
+    dec(i) { if (--this.cart[i].qty <= 0) this.cart.splice(i, 1); this.updateCartCount(); this.refreshQuote(); this.syncDisplay(); },
+    updateCartCount(){root.cartCount=this.cart.reduce((sum,line)=>sum+Number(line.qty||0),0);},
     syncDisplay() {
       clearTimeout(this.displayTimer);
       this.displayTimer = setTimeout(() => fetch('/api/pos/cart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table:this.order.table,tableId:this.order.tableId,channel:this.order.channel,items:this.cart})}).catch(()=>{}),250);
     },
 
-    subtotal() { return this.cart.reduce((s, l) => s + l.price * l.qty, 0); },
-    tax()      { return root.taxMode === 'included' ? this.subtotal() - this.subtotal() / (1 + this.taxRate / 100) : this.subtotal() * (this.taxRate / 100); },
-    total()    { return this.subtotal() + (root.taxMode === 'excluded' ? this.tax() : 0) + Math.max(0, Number(this.order.tip) || 0); },
-    setTipPercent(percent) { this.order.tip = Math.round(this.subtotal() * percent / 100); },
+    subtotal() { return Number(this.quote.subtotal || 0); },
+    tax()      { return Number(this.quote.tax || 0); },
+    total()    { return Number(this.quote.total || 0); },
+    async refreshQuote() {
+      clearTimeout(this.quoteTimer);
+      this.quoteTimer=setTimeout(async()=>{
+        try {
+          const result=await fetch(`${String(window.POS_API_BASE_URL||'').replace(/\/$/,'')}/api/quote`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:this.cart.map(line=>({productId:line.productId,qty:line.qty})),channel:this.order.channel,tipPercent:this.tipPercent})}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);return data;});
+          this.quote=result;
+          const serverLines=new Map((result.lines||[]).map(line=>[String(line.productId),line]));
+          this.cart=this.cart.map(line=>{const server=serverLines.get(String(line.productId));return server?{...line,name:server.name,price:server.price}:line;});
+        } catch(error) { if(this.cart.length) toast(error.message,'error'); }
+      },120);
+    },
+    setTipPercent(percent) { this.tipPercent=Number(percent)||0;this.refreshQuote(); },
     openPay() {
       if (!this.cart.length) return;
       this.showChannel = true;
     },
-    chooseChannel(channel) { this.order.channel = channel; this.showChannel = false; this.showPay = true; },
+    chooseChannel(channel) { this.order.channel = channel; this.showChannel = false; this.refreshQuote(); this.showPay = true; },
 
     async finalizeOrder() {
       this.processing = true;
       try {
-        const orderDoc = {
-          table: this.order.table, tableId: this.order.tableId, channel: this.order.channel, customerPhone: this.order.customerPhone,
-          riderName: this.order.riderName, riderPhone: this.order.riderPhone, guests: this.order.guests,
-          customer: this.order.customer,
-          customerId: root.role === 'customer' ? root.user?.uid || null : null,
-          waiterId: root.role === 'customer' ? null : root.user?.uid || null,
-          waiterName: root.role === 'customer' ? root.userName : root.userName,
-          status: root.role === 'customer' || this.payMethod === 'mpesa' ? 'pending' : 'paid',
-          paymentStatus: root.role === 'customer' || this.payMethod === 'mpesa' ? 'pending' : 'paid', paymentMethod: this.payMethod,
-          subtotal: this.subtotal(), tax: this.tax(), tip: Math.max(0, Number(this.order.tip) || 0),
-          rating: this.order.rating, feedback: this.order.feedback,
-          total: this.total(),
-          currency: 'KES', createdAt: serverTimestamp()
-        };
-        const result = await backendRequest('/api/orders', 'POST', { ...orderDoc, items: this.cart });
-        const orderId = result.id;
-        if (result.order) Object.assign(orderDoc, result.order);
-        if (result.clientQueued) {
-          orderDoc.status = 'pending';
-          orderDoc.paymentStatus = 'pending';
-        }
+        if(root.role==='customer'&&!localStorage.getItem('hp_customer_token')&&!sessionStorage.getItem('hp_customer_token')){root.openCustomerAuth('login');return;}
+        if(this.order.channel==='delivery'&&!this.order.address.trim())return toast('Enter your delivery address.','error');
+        const payload={table:this.order.table,tableId:this.order.tableId,channel:this.order.channel,items:this.cart.map(line=>({productId:line.productId,qty:line.qty})),tipPercent:this.tipPercent,notes:this.order.notes,address:this.order.address,landmark:this.order.landmark,riderNotes:this.order.riderNotes};
+        const result=root.role==='customer'?await customerRequest('/api/customer/orders','POST',payload):await backendRequest('/api/orders','POST',payload);
+        const orderDoc=result.order||{};
+        const orderId=orderDoc.id||result.id;
         if (result.queued) toast('Order saved on this server and queued for sync.', 'info');
-
-        const savedOrder = { id: orderId, ...orderDoc, lines: result.lines || this.cart };
-        toast(`Order ${orderId.slice(0,6)} saved · ${window.ksh(orderDoc.total)}`, 'success');
+        toast(`Order ${String(orderId).slice(0,6)} saved · ${window.ksh(orderDoc.total)}`, 'success');
         this.showPay = false;
-        if (orderDoc.paymentStatus === 'paid' && this.receiptSettings.enabled) {
-          setTimeout(() => {
-            if (this.receiptSettings.autoPrint || confirm('Print receipt?')) printReceipt(savedOrder, root.hotelName);
-          }, 200);
-        }
+        if(root.role==='customer')location.hash='#orders';
         this.cart = [];
+        this.updateCartCount();
         this.syncDisplay();
         sessionStorage.removeItem('samsCustomerCart');
-        this.order = { table: '', tableId: null, channel: 'takeout', guests: 1, customer: root.role === 'customer' ? root.userName : '', customerPhone: '', riderName: '', riderPhone: '', tip: 0, rating: 0, feedback: '' };
+        this.order = { table: '', tableId: null, channel: 'takeout', guests: 1, customer: root.role === 'customer' ? root.userName : '', customerPhone: '', address:'',landmark:'',riderNotes:'',notes:'',riderName: '', riderPhone: '', tip: 0, rating: 0, feedback: '' };this.tipPercent=0;this.quote={subtotal:0,tax:0,tip:0,total:0,lines:[]};
       } catch (e) {
         toast(e.message, 'error');
       } finally { this.processing = false; }
@@ -422,6 +492,9 @@ window.ordersApp = function (root) {
     init() {
       if (!root.user) return;
       if (root.role === 'admin') { this.refreshOverview(); this.overviewTimer=setInterval(()=>this.refreshOverview(),10000); return; }
+      if(root.role==='customer'&&(localStorage.getItem('hp_customer_token')||sessionStorage.getItem('hp_customer_token'))){
+        this.refreshCustomerOrders();this.customerTimer=setInterval(()=>this.refreshCustomerOrders(),5000);return;
+      }
       const q = root.role === 'customer'
         ? query(collection(db, 'orders'), where('customerId', '==', root.user.uid))
         : ['cashier', 'supervisor'].includes(root.role)
@@ -433,8 +506,11 @@ window.ordersApp = function (root) {
         if (this.selected) this.selected = this.orders.find(order => order.id === this.selected.id) || this.selected;
       }, error => toast(error.message, 'error'));
     },
+    async refreshCustomerOrders(){try{this.orders=(await customerRequest('/api/customer/orders')).map(order=>({...order,lines:order.items||[],paymentStatus:order.status==='paid'?'paid':'pending',createdAt:order.createdAt}));if(this.selected)this.selected=this.orders.find(order=>order.id===this.selected.id)||this.selected;}catch(error){console.warn('Customer orders unavailable:',error.message);}},
+    async cancelCustomerOrder(order){if(!confirm('Cancel this order?'))return;try{const updated=await customerRequest(`/api/customer/orders/${encodeURIComponent(order.id)}/cancel`,'POST',{});Object.assign(order,updated);if(this.selected?.id===order.id)Object.assign(this.selected,updated);await this.refreshCustomerOrders();}catch(error){toast(error.message,'error');}},
     async refreshOverview() { this.overview=await backendRequest('/api/admin/overview','GET').catch(()=>this.overview); },
     async select(o) {
+      if(o.items||o.history){this.selected={...o,lines:o.items||o.lines||[]};return;}
       const lineSnap = await getDocs(collection(db, 'orders', o.id, 'lines'));
       this.selected = { ...o, lines: lineSnap.docs.map(d => d.data()) };
     },
@@ -451,24 +527,24 @@ window.ordersApp = function (root) {
     async markPaid(o, method = 'cash') {
       if (!['cashier', 'supervisor', 'manager', 'admin'].includes(root.role)) return toast('Cashier access required to settle bills.', 'error');
       try {
-        const payment = await backendRequest(`/api/orders/${encodeURIComponent(o.id)}/payment`, 'PATCH', { paymentMethod: method });
-        Object.assign(o, { status: 'paid', paymentStatus: 'paid', paymentMethod: method });
+        const updated = await staffRequest(`/api/staff/orders/${encodeURIComponent(o.id)}/status`, 'PATCH', { status:'paid', note:`Paid by ${method}` });
+        Object.assign(o, updated, { paymentStatus: 'paid', paymentMethod: method });
         if (this.selected?.id === o.id) Object.assign(this.selected, o);
-        toast(payment.loyalty ? `Payment recorded. Loyalty stamps: ${payment.loyalty.stamps}/10.` : 'Payment recorded as paid.', 'success');
+        toast('Payment recorded as paid.', 'success');
       } catch (error) { toast(error.message, 'error'); }
     },
     async promptMpesa(o) {
       toast('M-Pesa payments are disabled in the free SQLite demo.', 'info');
     },
     async splitLine(order,line) {
-      const quantity=Number(prompt(`How many of “${line.name}” should move to a new bill?`,String(Math.max(1,Math.floor((line.qty||line.quantity)/2)))));
-      if(!Number.isFinite(quantity)||quantity<=0)return;
-      try{const result=await backendRequest(`/api/orders/${encodeURIComponent(order.id)}/split`,'POST',{lines:[{id:line.id,qty:quantity}]});this.selected={...result.source,lines:result.source.lines};toast(`Created split bill #${result.split.id.slice(0,8)}.`,'success');}
+      const lines=order.lines||order.items||[];if(lines.length<2)return toast('A split needs at least two order lines.','error');
+      const parts=[[String(line.id)],lines.filter(item=>String(item.id)!==String(line.id)).map(item=>String(item.id))];
+      try{const result=await staffRequest(`/api/staff/orders/${encodeURIComponent(order.id)}/split`,'POST',{parts});this.orders=await staffRequest('/api/staff/orders');this.selected=this.orders.find(item=>item.id===order.id)||null;toast(`Split saved with ${result.children.length} new order(s).`,'success');}
       catch(error){toast(error.message,'error');}
     },
     async mergeBills(order) {
       const others=prompt('Enter the other open bill IDs, separated by commas:');if(!others)return;
-      try{const orderIds=[order.id,...others.split(',').map(value=>value.trim()).filter(Boolean)];const result=await backendRequest('/api/orders/merge','POST',{orderIds});this.selected={...result.order};toast('Bills merged.','success');}
+      try{const order_ids=[order.id,...others.split(',').map(value=>value.trim()).filter(Boolean)];const result=await staffRequest('/api/staff/orders/merge','POST',{order_ids});this.orders=await staffRequest('/api/staff/orders');this.selected={...result.order,lines:result.order.items};toast('Bills merged.','success');}
       catch(error){toast(error.message,'error');}
     },
     timestamp(o) { return (asMillis(o.createdAt) ? asDate(o.createdAt).toLocaleString() : 'Sync pending'); }
@@ -478,7 +554,7 @@ window.ordersApp = function (root) {
 window.messagesApp = function (root) {
   return {
     get root() { return root; },
-    teams: ['Front of House', 'Kitchen'], activeTeam: 'Front of House', messages: [], draft: '', unsubscribe: null, typingUnsubscribe: null, typingNames: [], typingTimer: null, hasLoaded: false, messagePush: false,
+    teams: ['Front of House', 'Kitchen'], activeTeam: 'Front of House', messages: [], draft: '', unsubscribe: null, typingUnsubscribe: null, typingNames: [], typingTimer: null, hasLoaded: false, messagePush: false,stream:null,pollTimer:null,mode:'team',supportThreads:[],selectedCustomer:null,
     async init() {
       if (root.role === 'customer') return;
       try {
@@ -487,8 +563,21 @@ window.messagesApp = function (root) {
       } catch {}
       this.watchTeam();
     },
-    selectTeam(team) { this.activeTeam = team; this.watchTeam(); },
+    selectMode(mode){this.mode=mode;if(mode==='customers'){this.loadCustomerThreads();}else{this.selectedCustomer=null;this.watchTeam();}},
+    selectTeam(team) { this.mode='team';this.activeTeam = team; this.watchTeam(); },
+    async loadCustomerThreads(){try{this.supportThreads=await staffRequest('/api/messages/customer');}catch(error){toast(error.message,'error');}},
+    async selectCustomer(thread){this.mode='customers';this.selectedCustomer=thread;this.stream?.close();clearInterval(this.pollTimer);const customerId=thread.customerId;const load=async()=>{try{this.messages=await staffRequest(`/api/messages/customer?customer_id=${encodeURIComponent(customerId)}`);await staffRequest('/api/messages/customer/read','POST',{customer_id:customerId});await this.loadCustomerThreads();}catch(error){console.warn(error.message);}};await load();const token=localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token')||localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token');if(token){this.stream=new EventSource(`/api/stream?token=${encodeURIComponent(token)}&scope=${encodeURIComponent(`customer:${customerId}`)}`);this.stream.addEventListener('message',event=>{const message=JSON.parse(event.data).message;if(message&&!this.messages.some(item=>item.id===message.id))this.messages.push({...message,text:message.body,fromName:message.senderName});});this.stream.onerror=()=>{this.stream?.close();this.stream=null;clearInterval(this.pollTimer);this.pollTimer=setInterval(load,5000);};}},
     watchTeam() {
+      if(this.mode!=='team')return;
+      if(localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token')||localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token')){
+        this.stream?.close();clearInterval(this.pollTimer);
+        const token=localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token');
+        const load=async()=>{try{this.messages=(await staffRequest(`/api/staff/messages/team/${encodeURIComponent(this.activeTeam)}`)).map(message=>({...message,text:message.body,fromName:message.senderRole||'Staff'}));}catch(error){console.warn('Staff messages unavailable:',error.message);}};
+        this.stream=new EventSource(`/api/stream?token=${encodeURIComponent(token)}&scope=${encodeURIComponent(`team:${this.activeTeam}`)}`);
+        this.stream.addEventListener('message',event=>{const incoming=JSON.parse(event.data).message;if(incoming&&!this.messages.some(m=>m.id===incoming.id))this.messages.push({...incoming,text:incoming.body,fromName:incoming.senderName||incoming.senderRole||'Staff'});});
+        this.stream.onerror=()=>{this.stream?.close();this.stream=null;clearInterval(this.pollTimer);this.pollTimer=setInterval(load,5000);};
+        load();return;
+      }
       this.unsubscribe?.();
       this.hasLoaded = false;
       const q = query(collection(db, 'messages'), where('team', '==', this.activeTeam), limit(100));
@@ -515,6 +604,7 @@ window.messagesApp = function (root) {
     },
     async setTyping() {
       if (!root.user) return;
+      if(this.mode==='customers'&&this.selectedCustomer){const token=localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token')||localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token');if(token)staffRequest('/api/messages/customer/typing','POST',{customer_id:this.selectedCustomer.customerId}).catch(()=>{});return;}
       const id = `${this.activeTeam.replace(/[^A-Za-z0-9_-]/g, '_')}_${root.user.uid}`;
       try {
         await setDoc(doc(db, 'typing', id), {
@@ -530,11 +620,30 @@ window.messagesApp = function (root) {
       this.draft = '';
       this.setTyping();
       try {
-        const result = await backendRequest('/api/messages', 'POST', { team: this.activeTeam, text });
+        const staffToken=localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token')||localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token');
+        const result = this.mode==='customers'&&this.selectedCustomer
+          ? await staffRequest('/api/messages/customer','POST',{customer_id:this.selectedCustomer.customerId,body:text})
+          : staffToken
+            ? await staffRequest('/api/staff/messages','POST',{threadType:'team',threadId:this.activeTeam,body:text})
+          : await backendRequest('/api/messages', 'POST', { team: this.activeTeam, text });
         if (result.queued) toast('Message queued for retry.', 'info');
+        if(this.mode==='customers'&&this.selectedCustomer)await this.selectCustomer(this.selectedCustomer);
+        else if(staffToken)this.watchTeam();
       } catch (error) { this.draft = text; toast(error.message, 'error'); }
     },
     time(message) { return (asMillis(message.createdAt) ? asDate(message.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : 'Sending…'); }
+  };
+};
+
+window.customerChatApp=function(root){
+  return {
+    root,open:false,showEmoji:false,draft:'',messages:[],timer:null,stream:null,
+    emojis:['😀','😃','😄','😁','😆','😅','😂','🙂','🙃','😉','😊','😍','🥰','😘','😋','😎','🤗','🤔','👍','👎','👏','🙏','❤️','💛','💚','💙','✨','🎉','🍽️','🍛','🍗','🥗','🍟','🍕','🥤','☕','🥐','🍰','🛵','✅'],
+    async init(){await this.refresh();const token=localStorage.getItem('hp_customer_token')||sessionStorage.getItem('hp_customer_token');if(token){this.stream=new EventSource(`/api/stream?token=${encodeURIComponent(token)}&scope=${encodeURIComponent(`customer:${root.user.id}`)}`);this.stream.addEventListener('message',event=>{const message=JSON.parse(event.data).message;if(message&&!this.messages.some(old=>old.id===message.id))this.messages.push(message);});this.stream.onerror=()=>{this.stream?.close();this.stream=null;clearInterval(this.timer);this.timer=setInterval(()=>this.refresh(),5000);};}},
+    typingTimer:null,async typing(){clearTimeout(this.typingTimer);this.typingTimer=setTimeout(()=>customerRequest('/api/messages/customer/typing','POST',{}).catch(()=>{}),300);},
+    async refresh(){if(!localStorage.getItem('hp_customer_token')&&!sessionStorage.getItem('hp_customer_token'))return;try{this.messages=await customerRequest('/api/customer/messages');}catch{}},
+    async send(){const body=this.draft.trim();if(!body)return;this.draft='';try{await customerRequest('/api/customer/messages','POST',{body});this.showEmoji=false;await this.refresh();}catch(error){this.draft=body;toast(error.message,'error');}},
+    destroy(){clearInterval(this.timer);this.stream?.close();}
   };
 };
 
@@ -547,12 +656,12 @@ window.dashApp = function (root) {
     orders: [], totalRevenue: 0, newCustomers: 0,
     orderChange: 0, revenueChange: 0, customerChange: 0,
     bestEmployee: '', trendingDish: '', topEmployees: [], trending: [], _chartsDone: false,
-    period: 'week',
+    period: 'week', liveOrders:[],onlineUsers:{customers:[],staff:[],count:0},auditRows:[],auditRole:'',auditFrom:'',auditTo:'',
     get activeView() { return root.activeView; },
 
     unsubscribe: null,
     init() {
-      if (root.role === 'admin') { this.refreshOverview(); this.overviewTimer=setInterval(()=>this.refreshOverview(),10000); return; }
+      if (['admin','super_admin'].includes(root.role)) { this.refreshDetailed();this.overviewTimer=setInterval(()=>this.refreshDetailed(),30000);return; }
       const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
       this.unsubscribe = onSnapshot(q, snap => {
         this.orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -561,6 +670,8 @@ window.dashApp = function (root) {
       }, error => toast(error.message, 'error'));
     },
     async refreshOverview() { this.overview=await backendRequest('/api/admin/overview','GET').catch(()=>this.overview); },
+    async refreshDetailed(){try{const [orders,online,audit]=await Promise.all([staffRequest('/api/admin/orders'),staffRequest('/api/admin/online'),staffRequest(`/api/admin/audit?role=${encodeURIComponent(this.auditRole)}&from=${encodeURIComponent(this.auditFrom)}&to=${encodeURIComponent(this.auditTo)}`)]);this.liveOrders=orders;this.onlineUsers=online;this.auditRows=audit.rows;const today=new Date().toISOString().slice(0,10);this.overview={orders:{today:orders.filter(order=>String(order.createdAt).startsWith(today)).length,placed:orders.filter(order=>['placed','new','confirmed'].includes(order.status)).length,preparing:orders.filter(order=>order.status==='preparing').length,ready:orders.filter(order=>order.status==='ready').length},staff:online.staff};}catch(error){console.warn('Admin dashboard refresh failed:',error.message);}},
+    async advanceOrder(order,status){try{const updated=await staffRequest(`/api/staff/orders/${encodeURIComponent(order.id)}/status`,'PATCH',{status});Object.assign(order,updated);await this.refreshDetailed();}catch(error){toast(error.message,'error');}},
 
     periodStart(offset = 0) {
       const start = new Date();
@@ -810,7 +921,7 @@ window.kitchenApp = function () {
   return {
     orders: [], timer: null,
     async init() { await this.refresh(); this.timer=setInterval(()=>this.refresh(),3000); },
-    async refresh() { this.orders=await backendRequest('/api/orders','GET').then(rows=>rows.filter(order=>['new','preparing','ready'].includes(order.status))).catch(()=>this.orders); },
+    async refresh() { this.orders=await backendRequest('/api/orders','GET').then(rows=>rows.filter(order=>['confirmed','preparing','ready'].includes(order.status))).catch(()=>this.orders); },
     async setStatus(order,status) { await backendRequest(`/api/orders/${encodeURIComponent(order.id)}/status`,'PUT',{status}); await this.refresh(); toast(`Order marked ${status}.`,'success'); },
     destroy() { clearInterval(this.timer); }
   };
@@ -834,7 +945,7 @@ window.settingsApp = function (root) {
     appearance: { theme: 'light', fontSize: 16, lineHeight: 22 },
     checkout: { paymentHistory: true, miniStatement: true, receipt: { enabled: true, autoPrint: false }, methods: { cash: true, card: true, mpesa: true } },
     region: { location: 'Kenya', language: 'English', predictiveText: true },
-    settings: { hotelName: "HOTELI POA", currency: 'KES', taxRate: 16, taxMode: 'included' },
+    settings: { hotelName: "HOTELI POA", currency: 'KES', taxRate: 16, taxMode: 'included', loyaltyThreshold:10,deliveryFeeCents:0,serviceAreaText:'Nairobi and environs (demo)',receiptFooterText:'Thank you for dining with us.' },
     profile: { firstName: '', lastName: '', phone: '', dob: '', location: '' },
     miniStatement: [], sessions: [],
     avatarUploading: false,
@@ -877,6 +988,9 @@ window.settingsApp = function (root) {
     },
     async loadSettings() {
       try {
+        if(localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token')||localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token')){
+          const apiSettings=await staffRequest('/api/admin/settings');this.settings={...this.settings,...apiSettings,currency:'KES'};return;
+        }
         const [gen, userSettings] = await Promise.all([
           getDoc(doc(db, 'settings', 'general')),
           root.user ? loadUserSettings(root.user.uid) : Promise.resolve(null)
@@ -1037,7 +1151,8 @@ window.settingsApp = function (root) {
     },
     async saveSettings() {
       if (!root.isManager) return toast('Manager only', 'error');
-      await backendRequest('/api/settings/general', 'PUT', this.settings);
+      if(localStorage.getItem('hp_admin_token')||sessionStorage.getItem('hp_admin_token')||localStorage.getItem('hp_staff_token')||sessionStorage.getItem('hp_staff_token'))await staffRequest('/api/admin/settings','PUT',this.settings);
+      else await backendRequest('/api/settings/general', 'PUT', this.settings);
       toast('Settings saved', 'success');
     }
   };
