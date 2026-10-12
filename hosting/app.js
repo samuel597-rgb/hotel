@@ -118,7 +118,7 @@ window.rootApp = function () {
     hotelName: "HOTELI POA", taxRate: 16, taxMode: 'included',
     categories: [], products: [],
     staffLoginOpen: false, staffLoginPortal: 'admin', staffUsername: '', staffPassword: '', staffLoginError: '', staffLoginBusy: false,
-    canInstall: false, installPrompt: null,
+    canInstall: false, installPrompt: null, online: navigator.onLine,
     get isManager() { return this.role === 'manager' || this.role === 'admin'; },
     get navItems() {
       if (this.role === 'customer') return [
@@ -130,6 +130,7 @@ window.rootApp = function () {
         {id:'kitchen', label:'Kitchen Display', icon:'🍳'},
         {id:'messages', label:'Messages', icon:'✉️'}
       ];
+      if (this.role === 'kitchen') return [{id:'kitchen',label:'Kitchen Display',icon:'🍳'}];
       if (['cashier', 'supervisor'].includes(this.role)) return [
         {id:'pos', label:'Food & Drinks', icon:'🍽️'},
         {id:'orders', label:'Open Bills', icon:'🧾'},
@@ -144,23 +145,26 @@ window.rootApp = function () {
         {id:'profile', label:'Profile', icon:'👤'},
         {id:'settings', label:this.isManager ? 'Admin Settings' : 'Settings', icon:'⚙️'}
       ];
-      if (this.isManager) items.push({id:'products', label:'Products', icon:'📦'}, {id:'floor', label:'Floor & Tables', icon:'🪑'}, {id:'kitchen', label:'Kitchen Display', icon:'🍳'});
+      if (this.isManager) items.push({id:'products', label:'Products', icon:'📦'}, {id:'floor', label:'Floor & Tables', icon:'🪑'}, ...(this.role === 'admin' ? [] : [{id:'kitchen', label:'Kitchen Display', icon:'🍳'}]));
       return items;
     },
 
-    catalogUnsubscribers: [],
+    catalogUnsubscribers: [], presenceTimer: null,
     async init() {
       // Customer menu is the public start page. Staff views require a staff claim.
       const applyHash = () => {
         const requested = (location.hash || (this.role === 'customer' ? '#pos' : '#dashboard')).slice(1);
         const staffViews = ['dashboard', 'orders', 'messages', 'profile'];
-        const adminViews = ['products', 'settings', 'floor', 'kitchen'];
+        const adminViews = ['products', 'settings', 'floor', ...(this.role === 'admin' ? [] : ['kitchen'])];
         if (this.isManager) this.activeView = [...staffViews, ...adminViews, 'pos'].includes(requested) ? requested : 'dashboard';
         else if (this.role === 'waiter') this.activeView = ['pos', 'messages', 'kitchen'].includes(requested) ? requested : 'pos';
+        else if (this.role === 'kitchen') this.activeView = requested === 'kitchen' ? 'kitchen' : 'kitchen';
         else if (['cashier', 'supervisor'].includes(this.role)) this.activeView = ['pos', 'orders', 'messages', 'profile'].includes(requested) ? requested : 'orders';
         else this.activeView = requested === 'pos' || (this.user && ['profile', 'orders'].includes(requested)) ? requested : 'pos';
       };
       window.addEventListener('hashchange', applyHash);
+      window.addEventListener('online', () => { this.online = true; });
+      window.addEventListener('offline', () => { this.online = false; });
       window.addEventListener('beforeinstallprompt', event => {
         event.preventDefault();
         this.installPrompt = event;
@@ -172,6 +176,7 @@ window.rootApp = function () {
       });
 
       onAuthStateChanged(auth, async (u) => {
+        clearInterval(this.presenceTimer);
         if (!u) {
           this.user = null;
           this.userName = 'Guest';
@@ -188,7 +193,14 @@ window.rootApp = function () {
         applyHash();
         this.watchCatalog();
         this.watchSettings();
-        if (u) flushOfflineWrites();
+        if (u) {
+          flushOfflineWrites();
+          if (this.role !== 'customer') {
+            const sendPresence = () => backendRequest('/api/staff/presence','POST',{}).catch(() => {});
+            sendPresence();
+            this.presenceTimer = setInterval(sendPresence, 30000);
+          }
+        }
       });
     },
 
@@ -217,7 +229,7 @@ window.rootApp = function () {
         });
         const expectedRole = this.staffLoginPortal === 'admin' ? 'admin' : 'employee';
         if ((expectedRole === 'admin' && result.user?.role !== 'admin')
-          || (expectedRole === 'employee' && !['waiter','cashier','supervisor','manager'].includes(result.user?.role))) throw new Error('This account cannot use that login option.');
+          || (expectedRole === 'employee' && !['waiter','cashier','supervisor','manager','kitchen'].includes(result.user?.role))) throw new Error('This account cannot use that login option.');
         setSession(result.token, result.user);
         this.staffLoginOpen = false;
         this.staffPassword = '';
@@ -274,7 +286,7 @@ window.rootApp = function () {
 window.posApp = function (root) {
   return {
     get root() { return root; },
-    currentCategory: null, search: '', cart: [], selectedProduct: null, selectedQty: 1,
+    currentCategory: null, search: '', cart: [], tables: [], selectedProduct: null, selectedQty: 1,
     order: { table: '', tableId: null, channel: 'takeout', guests: 1, customer: '', customerPhone: '', riderName: '', riderPhone: '', tip: 0, rating: 0, feedback: '' },
     showPay: false, showChannel: false, payMethod: 'cash', processing: false,
     enabledPaymentMethods: ['cash', 'card', 'mpesa'],
@@ -286,6 +298,8 @@ window.posApp = function (root) {
     get activeView() { return root.activeView; },
 
     init() {
+      this.refreshTables();
+      this.tablesTimer = setInterval(() => this.refreshTables(), 15000);
       try {
         const saved = JSON.parse(sessionStorage.getItem('samsCustomerCart') || '[]');
         if (saved.length) this.cart = saved;
@@ -305,6 +319,8 @@ window.posApp = function (root) {
     get paymentOptions() {
       return [{ v: 'cash', l: '💵 Cash / pay on collection' }];
     },
+    async refreshTables() { this.tables = await fetch('/api/tables',{cache:'no-store'}).then(r=>r.json()).catch(()=>this.tables); },
+    selectTable(table) { if(table.status!=='available')return; this.order.table=`${table.floor} ${table.number}`;this.order.tableId=table.id;this.order.channel='dine_in';this.syncDisplay(); },
 
     filteredCategories() {
       const q = this.search.toLowerCase();
@@ -324,7 +340,7 @@ window.posApp = function (root) {
     addToCart(p, qty = 1) {
       const l = this.cart.find(x => x.productId === p.id);
       if (l) l.qty += qty; else this.cart.push({
-        productId: p.id, name: p.name, price: p.price, qty
+        productId: p.id, name: p.name, price: p.discountedPrice ?? p.price, qty
       });
       sessionStorage.setItem('samsCustomerCart', JSON.stringify(this.cart));
       this.syncDisplay();
@@ -399,12 +415,13 @@ window.posApp = function (root) {
 window.ordersApp = function (root) {
   return {
     get root() { return root; },
-    orders: [], selected: null,
+    orders: [], selected: null, overview: {orders:{},staff:[]}, overviewTimer:null,
     get activeView() { return root.activeView; },
 
     unsubscribe: null,
     init() {
       if (!root.user) return;
+      if (root.role === 'admin') { this.refreshOverview(); this.overviewTimer=setInterval(()=>this.refreshOverview(),10000); return; }
       const q = root.role === 'customer'
         ? query(collection(db, 'orders'), where('customerId', '==', root.user.uid))
         : ['cashier', 'supervisor'].includes(root.role)
@@ -416,6 +433,7 @@ window.ordersApp = function (root) {
         if (this.selected) this.selected = this.orders.find(order => order.id === this.selected.id) || this.selected;
       }, error => toast(error.message, 'error'));
     },
+    async refreshOverview() { this.overview=await backendRequest('/api/admin/overview','GET').catch(()=>this.overview); },
     async select(o) {
       const lineSnap = await getDocs(collection(db, 'orders', o.id, 'lines'));
       this.selected = { ...o, lines: lineSnap.docs.map(d => d.data()) };
@@ -525,6 +543,7 @@ window.messagesApp = function (root) {
 // ═══════════════════════════════════════════════════
 window.dashApp = function (root) {
   return {
+    overview: {orders:{},staff:[]}, overviewTimer:null,
     orders: [], totalRevenue: 0, newCustomers: 0,
     orderChange: 0, revenueChange: 0, customerChange: 0,
     bestEmployee: '', trendingDish: '', topEmployees: [], trending: [], _chartsDone: false,
@@ -533,6 +552,7 @@ window.dashApp = function (root) {
 
     unsubscribe: null,
     init() {
+      if (root.role === 'admin') { this.refreshOverview(); this.overviewTimer=setInterval(()=>this.refreshOverview(),10000); return; }
       const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
       this.unsubscribe = onSnapshot(q, snap => {
         this.orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -540,6 +560,7 @@ window.dashApp = function (root) {
         setTimeout(() => this.renderCharts(), 50);
       }, error => toast(error.message, 'error'));
     },
+    async refreshOverview() { this.overview=await backendRequest('/api/admin/overview','GET').catch(()=>this.overview); },
 
     periodStart(offset = 0) {
       const start = new Date();
@@ -676,7 +697,7 @@ window.productManager = function (root) {
   return {
     products: [], search: '', filterCat: '',
     showModal: false, editing: null,
-    form: { name: '', categoryId: '', price: 0, unit: '', description: '' }, imageFile: null,
+    form: { name: '', categoryId: '', price: 0, discount_percent: 0, unit: '', description: '' }, imageFile: null, clearImage:false,
 
     get categories() { return root.categories; },
     get role() { return root.role; },
@@ -710,14 +731,16 @@ window.productManager = function (root) {
     },
     openAdd() {
       this.editing = null;
-      this.form = { name: '', categoryId: this.categories[0]?.id || '', price: 0, unit: '', description: '' };
+      this.form = { name: '', categoryId: this.filterCat || this.categories[0]?.id || '', price: 0, discount_percent: 0, unit: '', description: '' };
       this.imageFile = null;
+      this.clearImage = false;
       this.showModal = true;
     },
     openEdit(p) {
       this.editing = p;
-      this.form = { name: p.name, categoryId: p.categoryId, price: p.price, unit: p.unit, description: p.description || '' };
+      this.form = { name: p.name, categoryId: p.categoryId, price: p.price, discount_percent: p.discountPercent || 0, unit: p.unit, description: p.description || '' };
       this.imageFile = null;
+      this.clearImage = false;
       this.showModal = true;
     },
     async save() {
@@ -726,6 +749,7 @@ window.productManager = function (root) {
       const payload = new FormData();
       for (const [key, value] of Object.entries(this.form)) payload.set(key, String(value ?? ''));
       if (this.imageFile) payload.set('image', this.imageFile);
+      if (this.clearImage) payload.set('removeImage','true');
       const token = await auth.currentUser?.getIdToken();
       const response = await fetch(this.editing ? `/api/products/${encodeURIComponent(this.editing.id)}` : '/api/products', {
         method: this.editing ? 'PUT' : 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: payload
@@ -745,26 +769,29 @@ window.productManager = function (root) {
       await backendRequest(`/api/products/${encodeURIComponent(id)}`, 'DELETE');
       this.products = this.products.filter(product => product.id !== id);
       toast('Deleted', 'success');
-    }
+    },
+    async addCategory() { const name=prompt('New category name')?.trim();if(!name)return;try{await backendRequest('/api/categories','POST',{name,icon:'',sort_order:this.categories.length+1});root.watchCatalog();toast('Category added.','success');}catch(error){toast(error.message,'error');} }
   };
 };
 
 window.floorApp = function (root) {
   return {
-    tables: [], floor: 'Main Floor', staff: [], registerOpen: null, showOpen: false, showTax: false, showQr: null,
-    openingCash: 0, openingNote: '', newFloor: 'Main Floor', newNumber: '', newCategory: '', newStaffName: '', newStaffUser: '', newStaffPassword: '', newStaffRole: 'waiter',
+    tables: [], floor: 'Main Floor', staff: [], registerOpen: null, showOpen: false, showTax: false, showQr: null, editingCategoryId:null, editingCategoryName:'',
+    openingCash: 0, openingNote: '', newFloor: 'Main Floor', newNumber: '', newStaffName: '', newStaffUser: '', newStaffPassword: '', newStaffRole: 'waiter',
     settings: { hotelName: root.hotelName, taxRate: root.taxRate, taxMode: root.taxMode },
+    get floors() { return [...new Set(this.tables.map(table=>table.floor))]; },
     async init() { await this.refresh(); this.loadStaff(); this.registerOpen=await backendRequest('/api/register/current','GET').catch(()=>null); },
     async refresh() { this.tables = await fetch('/api/tables').then(r => r.json()).catch(() => []); },
     async loadStaff() { this.staff = await backendRequest('/api/staff','GET').catch(() => []); },
     setStatus(table, status) { return backendRequest(`/api/tables/${table.id}/status`,'PUT',{status}).then(() => this.refresh()).catch(e => toast(e.message,'error')); },
     async openTable(table) { try { const display=await backendRequest(`/api/tables/${table.id}/display`,'GET'); this.showQr={...table,displayURL:new URL(display.url,location.origin).href,qrURL:new URL(display.qrUrl,location.origin).href}; } catch(error) { toast(error.message,'error'); } },
-    async addTable() { const result = await backendRequest('/api/tables','POST',{floor:this.newFloor,number:Number(this.newNumber)}); this.newNumber=''; await this.refresh(); toast(`Table ${result.number} added.`,'success'); },
-    async addCategory() { const name=this.newCategory.trim(); if (!name) return; await backendRequest('/api/categories','POST',{name,icon:'🍽️',sort_order:root.categories.length+1}); this.newCategory=''; root.watchCatalog(); toast('Category added.','success'); },
-    async renameCategory(category) { const name=prompt('Category name',category.name)?.trim(); if(!name||name===category.name)return; await backendRequest(`/api/categories/${category.id}`,'PUT',{name,icon:category.icon,sort_order:category.sort_order}); root.watchCatalog(); },
+    async addTable() { const result = await backendRequest('/api/tables','POST',{floor:this.newFloor.trim(),number:Number(this.newNumber)}); this.floor=this.newFloor.trim();this.newNumber=''; await this.refresh(); toast(`Table ${result.number} added.`,'success'); },
+    async addCategory() { const name=prompt('New category name')?.trim(); if (!name) return; try{await backendRequest('/api/categories','POST',{name,icon:'',sort_order:root.categories.length+1});root.watchCatalog();toast('Category added.','success');}catch(error){toast(error.message,'error');} },
+    startRename(category) { this.editingCategoryId=category.id;this.editingCategoryName=category.name; },
+    async saveCategory(category) { const name=this.editingCategoryName.trim();if(!name)return;try{await backendRequest(`/api/categories/${category.id}`,'PUT',{name,icon:category.icon,sort_order:category.sort_order});this.editingCategoryId=null;root.watchCatalog();toast('Category name saved.','success');}catch(error){toast(error.message,'error');} },
     async removeCategory(category) { if(!confirm(`Remove category ${category.name}?`))return; try{await backendRequest(`/api/categories/${category.id}`,'DELETE');root.watchCatalog();}catch(error){toast(error.message,'error');} },
     async addStaff() { const result=await backendRequest('/api/staff','POST',{name:this.newStaffName,username:this.newStaffUser,password:this.newStaffPassword,role:this.newStaffRole}); this.newStaffName=this.newStaffUser=this.newStaffPassword=''; await this.loadStaff(); toast(`Staff account ${result.username} created.`,'success'); },
-    async editStaff(member) { const name=prompt('Staff name',member.name); if(!name?.trim())return; const role=prompt('Role: waiter, cashier, supervisor, manager',member.role); if(!role)return; try{await backendRequest(`/api/staff/${member.id}`,'PUT',{name:name.trim(),role});await this.loadStaff();}catch(error){toast(error.message,'error');} },
+    async editStaff(member) { const name=prompt('Staff name',member.name); if(!name?.trim())return; const role=prompt('Role: waiter, kitchen, cashier, supervisor, manager',member.role); if(!role)return; try{await backendRequest(`/api/staff/${member.id}`,'PUT',{name:name.trim(),role});await this.loadStaff();}catch(error){toast(error.message,'error');} },
     async removeStaff(member) { if (!confirm(`Remove ${member.name}?`)) return; await backendRequest(`/api/staff/${member.id}`,'DELETE'); await this.loadStaff(); },
     async saveTax() { const result=await backendRequest('/api/settings/general','PUT',this.settings); root.taxRate=Number(this.settings.taxRate)||0; root.taxMode=this.settings.taxMode; this.showTax=false; toast('Tax display saved.','success'); return result; },
     openRegister() { if (this.registerOpen) return toast('A register is already open.','info'); if (!localStorage.getItem('hpTaxModeChosen')) this.showTax=true; else this.showOpen=true; },

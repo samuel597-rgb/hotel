@@ -73,7 +73,17 @@
           <div class="text-sm text-slate-500">Dashboard › <span class="text-[#0A2540] font-medium">Sales statistics</span></div>
           <select x-model="period" @change="changePeriod()" class="px-3 py-2 border rounded-lg text-sm"><option value="day">Today</option><option value="week">This week</option><option value="month">This month</option></select>
         </header>
-        <div class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div x-show="role === 'admin'" class="p-6 space-y-5">
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <template x-for="metric in [['Orders today',overview.orders.today],['Orders placed',overview.orders.placed],['Preparing',overview.orders.preparing],['Ready',overview.orders.ready]]" :key="metric[0]">
+              <article class="rounded-xl border bg-white p-5"><p class="text-sm text-slate-500" x-text="metric[0]"></p><strong class="mt-2 block text-3xl text-[#0A2540]" x-text="metric[1] || 0"></strong></article>
+            </template>
+          </div>
+          <section class="rounded-xl border bg-white p-5"><h2 class="font-semibold text-[#0A2540]">Team activity</h2><p class="mt-1 text-sm text-slate-500">Shows who has used the app recently. This does not track their work.</p>
+            <div class="mt-3 divide-y"><template x-for="person in overview.staff" :key="person.id"><div class="flex items-center justify-between py-3"><div><strong x-text="person.name"></strong><span class="ml-2 text-sm capitalize text-slate-500" x-text="person.role"></span></div><span class="rounded-full px-3 py-1 text-xs" :class="person.active?'bg-emerald-100 text-emerald-800':'bg-slate-100 text-slate-600'" x-text="person.active?'Active recently':'Away'"></span></div></template><p x-show="!overview.staff.length" class="py-3 text-sm text-slate-500">No staff accounts found.</p></div>
+          </section>
+        </div>
+        <div x-show="role !== 'admin'" class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div class="lg:col-span-2 card p-5">
             <div class="font-semibold text-[#0A2540] mb-3">Daily sales</div>
             <canvas id="salesChart" height="100"></canvas>
@@ -174,7 +184,7 @@
                       </div>
                       <div class="font-semibold text-[#0A2540] text-sm" x-text="p.name"></div>
                       <div class="text-xs text-slate-400" x-text="p.unit"></div>
-                      <div class="mt-2 font-bold text-[#1E6FD9]" x-text="ksh(p.price)"></div>
+                      <div class="mt-2 font-bold text-[#1E6FD9]" x-text="ksh(p.discountedPrice ?? p.price)"></div><div x-show="p.discountPercent" class="text-xs text-amber-700"><span class="line-through" x-text="ksh(p.price)"></span><span x-text="' · '+p.discountPercent+'% off'"></span></div>
                     </button>
                   </template>
                 </div>
@@ -192,7 +202,8 @@
               <input type="number" min="1" placeholder="Guests" x-model.number="order.guests" class="px-3 py-2 bg-slate-100 rounded-lg outline-none" />
               <input x-show="root.role !== 'customer'" placeholder="Customer" x-model="order.customer" class="col-span-2 px-3 py-2 bg-slate-100 rounded-lg outline-none" />
             </div>
-            <div x-show="root.role === 'customer'" class="mt-4 space-y-3">
+          <div x-show="root.role === 'customer'" class="mt-4 space-y-3">
+            <div class="rounded-lg border p-3"><div class="mb-2 text-sm font-semibold">Available tables</div><div class="flex flex-wrap gap-2"><template x-for="table in tables" :key="table.id"><button type="button" @click="selectTable(table)" class="rounded-full border px-3 py-1.5 text-xs" :class="table.status==='available'?(order.tableId===table.id?'border-blue-600 bg-blue-50 text-blue-700':'border-emerald-300 text-emerald-700'):'border-slate-200 bg-slate-100 text-slate-500'" :disabled="table.status!=='available'"><span x-text="table.floor+' '+table.number+' · '+table.status"></span></button></template><span x-show="!tables.length" class="text-xs text-slate-500">No tables loaded.</span></div></div>
               <input x-model="order.customerPhone" type="tel" placeholder="Phone for loyalty stamps" class="w-full rounded-lg bg-slate-100 px-3 py-2 text-sm outline-none" />
               <p class="text-xs text-slate-500">Earn 1 stamp per paid order; 10 stamps unlock a free item.</p>
               <div><p class="text-xs text-slate-500 mb-1">Rate your service</p><div class="flex gap-1"><template x-for="star in [1,2,3,4,5]" :key="star"><button type="button" @click="setRating(star)" class="text-2xl" :class="order.rating >= star ? 'text-amber-400' : 'text-slate-300'">★</button></template></div></div>
@@ -294,7 +305,10 @@
         <header class="bg-white border-b px-6 py-4">
           <h1 class="text-xl font-bold text-[#0A2540]" x-text="role === 'customer' ? 'My Orders' : 'Bills & Payment History'"></h1>
         </header>
-        <div class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div x-show="role === 'admin'" class="p-6">
+          <div class="mx-auto max-w-3xl rounded-xl border bg-white p-6"><h2 class="text-lg font-semibold text-[#0A2540]">Order activity</h2><p class="mt-1 text-sm text-slate-500">Order contents and customer details are hidden from this view.</p><div class="mt-5 grid gap-3 sm:grid-cols-4"><template x-for="metric in [['Placed',overview.orders.placed],['Preparing',overview.orders.preparing],['Ready',overview.orders.ready],['Today',overview.orders.today]]" :key="metric[0]"><div class="rounded-lg bg-slate-50 p-4"><span class="text-sm text-slate-500" x-text="metric[0]"></span><strong class="mt-1 block text-2xl" x-text="metric[1]||0"></strong></div></template></div></div>
+        </div>
+        <div x-show="role !== 'admin'" class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div class="lg:col-span-2 space-y-3">
             <template x-for="o in orders" :key="o.id">
               <button @click="select(o)"
@@ -350,9 +364,10 @@
       <div x-show="activeView === 'products' && ['manager','admin'].includes(role)" x-data="productManager($data)" x-init="init()">
         <header class="bg-white border-b px-6 py-4 flex justify-between">
           <h1 class="text-xl font-bold text-[#0A2540]">Product Management</h1>
-          <div class="flex gap-2"><button @click="importLegacy()" class="rounded-lg border px-3 py-2 text-sm">Import local product table</button><button @click="openAdd()" class="bg-[#1E6FD9] text-white px-4 py-2 rounded-lg text-sm">+ Add Product</button></div>
+          <div class="flex gap-2"><button @click="addCategory()" class="rounded-lg border px-3 py-2 text-sm">+ Category</button><button @click="openAdd()" class="bg-[#1E6FD9] text-white px-4 py-2 rounded-lg text-sm">+ Add item</button></div>
         </header>
         <div class="p-6">
+          <div class="mb-3 flex flex-wrap gap-2"><template x-for="c in categories" :key="c.id"><button @click="filterCat=c.id" class="rounded-full border px-3 py-2 text-sm" :class="filterCat===c.id?'bg-[#0A2540] text-white':'bg-white'" x-text="c.name"></button></template><button @click="filterCat=''" class="rounded-full border px-3 py-2 text-sm" :class="!filterCat?'bg-[#0A2540] text-white':'bg-white'">All items</button></div>
           <div class="flex gap-4 mb-6">
             <input type="search" placeholder="Search…" x-model="search"
                    class="flex-1 px-4 py-2 rounded-lg border outline-none focus:border-[#1E6FD9]" />
@@ -368,7 +383,7 @@
               <thead class="bg-slate-50 text-slate-600">
                 <tr>
                   <th class="px-4 py-3">Image</th><th class="px-4 py-3">Name</th><th class="px-4 py-3">Category</th>
-                  <th class="px-4 py-3">Price</th><th class="px-4 py-3">Unit</th>
+                  <th class="px-4 py-3">Price / discount</th><th class="px-4 py-3">Unit</th>
                   <th class="px-4 py-3">Actions</th>
                 </tr>
               </thead>
@@ -378,7 +393,7 @@
                     <td class="px-4 py-3"><img x-show="p.imagePath || p.imageUrl" :src="p.imagePath || p.imageUrl" :alt="p.name" class="h-10 w-10 rounded object-cover" /></td>
                     <td class="px-4 py-3 font-medium" x-text="p.name"></td>
                     <td class="px-4 py-3 text-slate-500" x-text="catName(p.categoryId)"></td>
-                    <td class="px-4 py-3 text-[#1E6FD9] font-semibold" x-text="ksh(p.price)"></td>
+                    <td class="px-4 py-3 text-[#1E6FD9] font-semibold"><span x-text="ksh(p.price)"></span><span x-show="p.discountPercent" class="ml-1 rounded bg-amber-100 px-2 py-1 text-xs text-amber-800" x-text="p.discountPercent+'% off'"></span></td>
                     <td class="px-4 py-3 text-slate-500" x-text="p.unit"></td>
                     <td class="px-4 py-3">
                       <button @click="openEdit(p)" class="text-[#1E6FD9] mr-3">Edit</button>
@@ -406,8 +421,10 @@
                 <input placeholder="Unit" x-model="form.unit"
                        class="w-1/2 px-3 py-2 bg-slate-50 rounded-lg border outline-none" />
               </div>
+              <label class="block text-sm">Discount (%)<input type="number" min="0" max="100" step="1" x-model.number="form.discount_percent" class="mt-1 w-full rounded-lg border bg-slate-50 px-3 py-2"/><span class="text-xs text-slate-500">Set 0 for no discount.</span></label>
               <textarea placeholder="Description" x-model="form.description" class="w-full px-3 py-2 bg-slate-50 rounded-lg border outline-none"></textarea>
-              <label class="block text-sm text-slate-600">Product image (JPG, PNG, WEBP · up to 5 MB)<input type="file" accept="image/jpeg,image/png,image/webp" @change="imageFile=$event.target.files[0] || null" class="mt-1 block w-full text-sm" /></label>
+              <div x-show="editing?.imagePath || editing?.imageUrl" class="flex items-center gap-3"><img :src="editing?.imagePath || editing?.imageUrl" class="h-16 w-16 rounded object-cover"/><button type="button" @click="clearImage=true" class="text-sm text-red-600">Remove current photo</button></div>
+              <label class="block text-sm text-slate-600" x-text="editing ? 'Choose a new photo to replace current (optional)' : 'Add a product photo (optional)'"></label><input type="file" accept="image/jpeg,image/png,image/webp" @change="imageFile=$event.target.files[0] || null;clearImage=false" class="block w-full text-sm" />
             </div>
             <div class="flex justify-end gap-3 mt-6">
               <button @click="showModal=false" class="px-4 py-2 rounded-lg border">Cancel</button>
@@ -421,11 +438,11 @@
       <section x-show="activeView === 'floor' && ['manager','admin'].includes(role)" x-data="floorApp($data)" x-init="init()" class="min-h-full bg-slate-50">
         <header class="bg-white border-b px-6 py-4 flex flex-wrap items-center justify-between gap-3"><div><div class="text-sm text-slate-400">POS › Floor</div><h1 class="text-xl font-bold text-[#0A2540]">Floor &amp; Tables</h1></div><div class="flex gap-2"><button @click="showTax=true" class="rounded-lg border px-4 py-2">Tax display</button><button @click="openRegister()" class="rounded-lg bg-[#1E6FD9] px-4 py-2 text-white">Opening Control</button></div></header>
         <div class="p-6 grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
-          <div class="space-y-4"><div class="flex gap-2"><template x-for="name in ['Main Floor','Patio']" :key="name"><button @click="floor=name" class="rounded-lg px-4 py-2" :class="floor===name?'bg-[#0A2540] text-white':'bg-white border'" x-text="name"></button></template></div><div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4"><template x-for="table in tables.filter(t=>t.floor===floor)" :key="table.id"><button @click="openTable(table)" class="rounded-xl border p-5 text-left shadow-sm" :class="statusClass(table.status)"><span class="text-xs uppercase" x-text="table.status"></span><strong class="mt-3 block text-2xl" x-text="'Table '+table.number"></strong><span class="mt-2 block text-xs">Tap for order &amp; display</span><select @click.stop @change="setStatus(table,$event.target.value)" class="mt-3 rounded border bg-white px-2 py-1 text-xs text-slate-800"><option value="available" :selected="table.status==='available'">Available</option><option value="occupied" :selected="table.status==='occupied'">Occupied</option><option value="reserved" :selected="table.status==='reserved'">Reserved</option><option value="cleaning" :selected="table.status==='cleaning'">Needs cleaning</option></select></button></template></div>
-            <div class="rounded-xl bg-white p-4 border"><h2 class="font-semibold">Add table</h2><div class="mt-3 flex gap-2"><select x-model="newFloor" class="rounded-lg border px-3 py-2"><option>Main Floor</option><option>Patio</option></select><input type="number" min="1" x-model="newNumber" placeholder="Table number" class="rounded-lg border px-3 py-2"/><button @click="addTable()" class="rounded-lg bg-blue-600 px-4 py-2 text-white">Add</button></div></div>
+          <div class="space-y-4"><div class="flex gap-2"><template x-for="name in floors" :key="name"><button @click="floor=name" class="rounded-lg px-4 py-2" :class="floor===name?'bg-[#0A2540] text-white':'bg-white border'" x-text="name"></button></template></div><div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4"><template x-for="table in tables.filter(t=>t.floor===floor)" :key="table.id"><button @click="openTable(table)" class="rounded-xl border p-5 text-left shadow-sm" :class="statusClass(table.status)"><span class="text-xs uppercase" x-text="table.status"></span><strong class="mt-3 block text-2xl" x-text="'Table '+table.number"></strong><span class="mt-2 block text-xs">Tap for order &amp; display</span><select @click.stop @change="setStatus(table,$event.target.value)" class="mt-3 rounded border bg-white px-2 py-1 text-xs text-slate-800"><option value="available" :selected="table.status==='available'">Available</option><option value="occupied" :selected="table.status==='occupied'">Occupied</option><option value="reserved" :selected="table.status==='reserved'">Reserved</option><option value="cleaning" :selected="table.status==='cleaning'">Needs cleaning</option></select></button></template></div>
+            <div class="rounded-xl bg-white p-4 border"><h2 class="font-semibold">Add table</h2><div class="mt-3 flex gap-2"><input x-model="newFloor" placeholder="Floor / area" class="min-w-0 flex-1 rounded-lg border px-3 py-2"/><input type="number" min="1" x-model="newNumber" placeholder="Table number" class="w-32 rounded-lg border px-3 py-2"/><button @click="addTable()" class="rounded-lg bg-blue-600 px-4 py-2 text-white">Add</button></div></div>
           </div>
-          <div class="space-y-5"><div class="rounded-xl bg-white p-5 border"><h2 class="font-semibold">Menu categories</h2><div class="mt-3 flex gap-2"><input x-model="newCategory" placeholder="New category" class="flex-1 rounded-lg border px-3 py-2"/><button @click="addCategory()" class="rounded-lg border px-3">Add</button></div><div class="mt-3 divide-y"><template x-for="c in root.categories" :key="c.id"><div class="flex items-center justify-between py-2 text-sm"><span x-text="c.icon+' '+c.name"></span><span><button @click="renameCategory(c)" class="text-blue-600">Rename</button><button @click="removeCategory(c)" class="ml-3 text-red-600">Remove</button></span></div></template></div></div>
-            <div class="rounded-xl bg-white p-5 border"><h2 class="font-semibold">Staff accounts</h2><div class="mt-3 grid gap-2 sm:grid-cols-2"><input x-model="newStaffName" placeholder="Full name" class="rounded-lg border px-3 py-2"/><input x-model="newStaffUser" placeholder="Username" class="rounded-lg border px-3 py-2"/><input x-model="newStaffPassword" type="password" placeholder="Password (8+ chars)" class="rounded-lg border px-3 py-2"/><select x-model="newStaffRole" class="rounded-lg border px-3 py-2"><option value="waiter">Employee</option><option value="cashier">Cashier</option><option value="supervisor">Supervisor</option><option value="manager">Manager</option></select></div><button @click="addStaff()" class="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white">Create staff login</button><div class="mt-4 divide-y"><template x-for="member in staff" :key="member.id"><div class="flex items-center justify-between py-2 text-sm"><span><strong x-text="member.name"></strong> · <span x-text="member.role"></span></span><button @click="removeStaff(member)" class="text-red-600">Remove</button></div></template></div></div>
+          <div class="space-y-5"><div class="rounded-xl bg-white p-5 border"><h2 class="font-semibold">Menu categories</h2><button @click="addCategory()" class="mt-3 rounded-lg border px-3 py-2 text-sm">+ Add category</button><div class="mt-3 divide-y"><template x-for="c in root.categories" :key="c.id"><div class="flex items-center gap-2 py-2 text-sm"><template x-if="editingCategoryId===c.id"><input x-model="editingCategoryName" class="min-w-0 flex-1 rounded border px-2 py-1"/></template><span x-show="editingCategoryId!==c.id" class="min-w-0 flex-1" x-text="c.name"></span><span class="shrink-0"><button x-show="editingCategoryId!==c.id" @click="startRename(c)" class="text-blue-600">Edit</button><button x-show="editingCategoryId===c.id" @click="saveCategory(c)" class="text-emerald-700">Save</button><button @click="removeCategory(c)" class="ml-3 text-red-600">Remove</button></span></div></template></div></div>
+            <div class="rounded-xl bg-white p-5 border"><h2 class="font-semibold">Staff accounts</h2><div class="mt-3 grid gap-2 sm:grid-cols-2"><input x-model="newStaffName" placeholder="Full name" class="rounded-lg border px-3 py-2"/><input x-model="newStaffUser" placeholder="Username" class="rounded-lg border px-3 py-2"/><input x-model="newStaffPassword" type="password" placeholder="Password (8+ chars)" class="rounded-lg border px-3 py-2"/><select x-model="newStaffRole" class="rounded-lg border px-3 py-2"><option value="waiter">Employee</option><option value="kitchen">Cook / Kitchen</option><option value="cashier">Cashier</option><option value="supervisor">Supervisor</option><option value="manager">Manager</option></select></div><button @click="addStaff()" class="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white">Create staff login</button><div class="mt-4 divide-y"><template x-for="member in staff" :key="member.id"><div class="flex items-center justify-between py-2 text-sm"><span><strong x-text="member.name"></strong> · <span x-text="member.role"></span></span><button @click="removeStaff(member)" class="text-red-600">Remove</button></div></template></div></div>
           </div>
         </div>
         <div x-show="showOpen" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-black/50"><div class="w-full max-w-md rounded-xl bg-white p-6"><h2 class="text-lg font-bold">Opening Control</h2><label class="mt-4 block text-sm">Opening cash (KSh)<input type="number" min="0" x-model.number="openingCash" class="mt-1 w-full rounded-lg border px-3 py-2"/></label><label class="mt-3 block text-sm">Opening note<textarea x-model="openingNote" class="mt-1 w-full rounded-lg border px-3 py-2"></textarea></label><div class="mt-5 flex justify-end gap-2"><button @click="discardRegister()" class="rounded-lg border px-4 py-2">Discard</button><button @click="confirmRegister()" class="rounded-lg bg-blue-600 px-4 py-2 text-white">Open Register</button></div></div></div>
@@ -434,7 +451,7 @@
       </section>
 
       <!-- ═══ KITCHEN DISPLAY ═══ -->
-      <section x-show="activeView === 'kitchen' && ['waiter','cashier','supervisor','manager','admin'].includes(role)" x-data="kitchenApp()" x-init="init()" class="min-h-full bg-slate-50 p-6"><header class="mb-5 flex items-center justify-between"><div><div class="text-sm text-slate-400">POS › Kitchen</div><h1 class="text-xl font-bold text-[#0A2540]">Kitchen Display</h1></div><span class="text-sm text-slate-500">Live order queue</span></header><div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><template x-for="order in orders" :key="order.id"><article class="rounded-xl border bg-white p-5 shadow-sm"><div class="flex justify-between"><strong x-text="'#'+order.id.slice(0,8)"></strong><span class="rounded-full bg-amber-50 px-2 py-1 text-xs capitalize" x-text="order.status"></span></div><div class="mt-1 text-sm text-slate-500" x-text="(order.channel||'takeout').replace('_',' ')+' · '+(order.table||'')"></div><ul class="mt-4 space-y-2"><template x-for="line in order.lines||[]" :key="line.id"><li class="flex justify-between text-sm"><span x-text="line.name"></span><strong x-text="'× '+(line.qty||line.quantity)"></strong></li></template></ul><p x-show="order.riderName" class="mt-3 text-xs text-slate-500" x-text="'Rider: '+order.riderName+' · '+order.riderPhone"></p><div class="mt-5 flex gap-2"><button x-show="order.status==='new'" @click="setStatus(order,'preparing')" class="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">Preparing</button><button x-show="order.status==='preparing'" @click="setStatus(order,'ready')" class="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white">Ready</button><button x-show="order.status==='ready'" @click="setStatus(order,'served')" class="rounded-lg bg-slate-700 px-3 py-2 text-sm text-white">Served</button></div></article></template><p x-show="!orders.length" class="text-slate-500">No active kitchen tickets.</p></div></section>
+      <section x-show="activeView === 'kitchen' && role !== 'admin' && ['waiter','cashier','supervisor','manager','kitchen'].includes(role)" x-data="kitchenApp()" x-init="if(role !== 'admin') init()" class="min-h-full bg-slate-50 p-6"><header class="mb-5 flex items-center justify-between"><div><div class="text-sm text-slate-400">POS › Kitchen</div><h1 class="text-xl font-bold text-[#0A2540]">Kitchen Display</h1></div><span class="text-sm text-slate-500">Live order queue</span></header><div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><template x-for="order in orders" :key="order.id"><article class="rounded-xl border bg-white p-5 shadow-sm"><div class="flex justify-between"><strong x-text="'#'+order.id.slice(0,8)"></strong><span class="rounded-full bg-amber-50 px-2 py-1 text-xs capitalize" x-text="order.status"></span></div><div class="mt-1 text-sm text-slate-500" x-text="(order.channel||'takeout').replace('_',' ')+' · '+(order.table||'')"></div><ul class="mt-4 space-y-2"><template x-for="line in order.lines||[]" :key="line.id"><li class="flex justify-between text-sm"><span x-text="line.name"></span><strong x-text="'× '+(line.qty||line.quantity)"></strong></li></template></ul><p x-show="order.riderName" class="mt-3 text-xs text-slate-500" x-text="'Rider: '+order.riderName+' · '+order.riderPhone"></p><div class="mt-5 flex gap-2"><button x-show="order.status==='new'" @click="setStatus(order,'preparing')" class="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">Preparing</button><button x-show="order.status==='preparing'" @click="setStatus(order,'ready')" class="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white">Ready</button><button x-show="order.status==='ready'" @click="setStatus(order,'served')" class="rounded-lg bg-slate-700 px-3 py-2 text-sm text-white">Served</button></div></article></template><p x-show="!orders.length" class="text-slate-500">No active kitchen tickets.</p></div></section>
 
       <!-- ═══ SETTINGS ═══ -->
       <div x-show="activeView === 'settings' && (role !== 'customer' || user)" x-data="settingsApp($data)" x-init="init()">
@@ -628,7 +645,7 @@
   </div>
 
   <!-- Offline banner -->
-  <div x-show="!navigator.onLine" class="offline-banner">⚠️ Offline — orders will sync when reconnected</div>
+  <div x-show="!online" class="offline-banner">Offline — the saved menu is available. Orders will sync when internet returns.</div>
 </div>
 
 <script src="/runtime-config.js"></script>

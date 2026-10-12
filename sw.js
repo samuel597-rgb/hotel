@@ -1,4 +1,4 @@
-const CACHE = 'sams-hotel-sqlite-v4';
+const CACHE = 'sams-hotel-sqlite-v5';
 const APP_CACHE_PREFIX = 'sams-hotel-';
 const ASSETS = [
   '/', '/app/', '/auth.html', '/auth.js', '/styles.css', '/icons/logo-192.png', '/icons/logo-512.png', '/icons/logo-180.png',
@@ -23,14 +23,33 @@ self.addEventListener('fetch', event => {
   const request = event.request;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
+  // Public menu reads can come from the same host or a separately hosted API.
+  const params = new URLSearchParams(url.search);
+  const isOfflineCatalogRead = (
+    url.pathname === '/api/products'
+    || url.pathname === '/api/categories'
+    || (url.pathname === '/api/records' && ['products', 'categories'].includes(params.get('path')))
+    || (url.pathname === '/api/records' && params.get('path') === 'settings' && params.get('id') === 'general')
+  );
+  if (isOfflineCatalogRead) {
+    const network = fetch(request).then(async response => {
+      if (response.ok) await caches.open(CACHE).then(cache => cache.put(request, response.clone())).catch(() => {});
+      return response;
+    });
+    event.waitUntil(network.then(() => {}).catch(() => {}));
+    event.respondWith((async () => (await caches.match(request)) || network)());
+    return;
+  }
+
   if (url.origin !== self.location.origin) {
-    const staticCdn = (url.hostname === 'cdn.jsdelivr.net' && url.pathname.startsWith('/npm/chart.js'))
+    const staticCdn = (url.hostname === 'cdn.jsdelivr.net'
+      && (url.pathname.startsWith('/npm/chart.js') || url.pathname.startsWith('/npm/alpinejs')))
       || url.hostname === 'cdn.tailwindcss.com' || url.hostname === 'esm.sh';
-    if (!staticCdn) return;
-    event.respondWith(caches.match(request).then(cached => cached || fetch(request).then(response => {
+    const menuImage = url.hostname === 'images.unsplash.com' && request.destination === 'image';
+    if (!staticCdn && !menuImage) return;
+    event.respondWith(caches.match(request).then(cached => cached || fetch(request).then(async response => {
       if (response.ok || response.type === 'opaque') {
-        const copy = response.clone();
-        caches.open(CACHE).then(cache => cache.put(request, copy)).catch(() => {});
+        await caches.open(CACHE).then(cache => cache.put(request, response.clone())).catch(() => {});
       }
       return response;
     })));
@@ -39,7 +58,7 @@ self.addEventListener('fetch', event => {
 
   if (['/login','/admin','/employee','/display'].includes(url.pathname)) return;
 
-  // Authentication settings and API responses must always be fetched live.
+  // Authentication, order, and private API responses are never cached.
   if (url.pathname.startsWith('/api/') || url.pathname === '/runtime-config.json') return;
 
   if (request.destination === 'script' || /\.js$/i.test(url.pathname)) {

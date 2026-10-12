@@ -28,6 +28,7 @@ ensureColumn('products', 'category', 'TEXT');
 ensureColumn('local_records', 'owner_id', 'TEXT');
 ensureColumn('products', 'category_id', 'INTEGER REFERENCES categories(id) ON DELETE SET NULL');
 ensureColumn('products', 'description', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('products', 'discount_percent', 'REAL NOT NULL DEFAULT 0');
 ensureColumn('products', 'image_path', 'TEXT');
 ensureColumn('products', 'active', 'INTEGER NOT NULL DEFAULT 1');
 ensureColumn('products', 'created_at', 'TEXT');
@@ -57,10 +58,27 @@ db.exec(`UPDATE orders SET total = COALESCE(NULLIF(total, 0), total_amount, 0),
   subtotal = COALESCE(NULLIF(subtotal, 0), total_amount, 0),
   customer_name = COALESCE(NULLIF(customer_name, ''), customer_name, '')`);
 
-const categoryIcon = name => ({
-  food: '🍽️', drinks: '🥤', 'hot drinks': '☕', snacks: '🥐', chicken: '🍗',
-  pizza: '🍕', sushi: '🍣', burgers: '🍔', pasta: '🍝', salads: '🥗', desserts: '🍰', breakfast: '🥐'
-}[String(name).toLowerCase()] || '🍽️');
+const categoryIcon = () => '';
+const categoryRenames = [
+  ['Beef & Goat', 'Beef & Goat Dishes'],
+  ['Chicken', 'Chicken Dishes'],
+  ['Fish', 'Fish Dishes'],
+  ['Main Dishes', 'Other Main Dishes & Stews'],
+  ['Sides', 'Side Dishes & Vegetables'],
+  ['Snacks', 'Breakfast & Snacks']
+];
+for (const [oldName, newName] of categoryRenames) {
+  const oldCategory = db.prepare('SELECT id FROM categories WHERE name=? COLLATE NOCASE').get(oldName);
+  if (!oldCategory) continue;
+  const newCategory = db.prepare('SELECT id FROM categories WHERE name=? COLLATE NOCASE').get(newName);
+  if (newCategory && newCategory.id !== oldCategory.id) {
+    db.prepare('UPDATE products SET category_id=? WHERE category_id=?').run(newCategory.id, oldCategory.id);
+    db.prepare('UPDATE categories SET active=0 WHERE id=?').run(oldCategory.id);
+  } else {
+    db.prepare('UPDATE categories SET name=? WHERE id=?').run(newName, oldCategory.id);
+  }
+  db.prepare('UPDATE products SET sub_category=? WHERE sub_category=? COLLATE NOCASE').run(newName, oldName);
+}
 const categoryNames = new Set(db.prepare(`SELECT name FROM categories`).all().map(row => row.name.toLowerCase()));
 const legacyCategories = db.prepare(`SELECT DISTINCT COALESCE(NULLIF(sub_category,''),
   CASE lower(category) WHEN 'drinks' THEN 'Drinks' ELSE 'Food' END) AS name FROM products`).all();
@@ -131,6 +149,26 @@ if (!productCount) {
   }
 }
 
+// Add newly checked-in menu rows to existing local databases without replacing
+// prices, availability, or images that an admin has already edited.
+const seedMissingMenuProduct = db.prepare(`INSERT INTO products
+  (name,price,category,image_url,sub_category,firestore_id,is_available,category_id,description,active)
+  VALUES(?,?,?,?,?,?,?,?,?,1)`);
+for (const [index, product] of menu.entries()) {
+  if (db.prepare('SELECT 1 FROM products WHERE name=? COLLATE NOCASE').get(product.name)) continue;
+  const categoryName = product.sub_category || product.categoryId || (String(product.category).toLowerCase() === 'drinks' ? 'Cold Drinks' : 'Main Dishes');
+  let category = db.prepare('SELECT id FROM categories WHERE name=? COLLATE NOCASE').get(categoryName);
+  if (!category) {
+    const order = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM categories').get().n;
+    const info = db.prepare('INSERT INTO categories(name,icon,sort_order) VALUES(?,?,?)').run(categoryName, '', order);
+    category = { id: info.lastInsertRowid };
+  }
+  const stableId = String(product.id || `${product.categoryId || 'item'}-${index + 1}`);
+  seedMissingMenuProduct.run(product.name, Number(product.price) || 0,
+    product.category || product.department || 'food', product.image_url || product.imageUrl || '',
+    categoryName, stableId, product.isAvailable === false ? 0 : 1, category.id, product.description || '');
+}
+
 const allProductCategories = db.prepare(`SELECT DISTINCT COALESCE(NULLIF(sub_category,''),
   CASE lower(category) WHEN 'drinks' THEN 'Drinks' ELSE 'Food' END) AS name FROM products`).all();
 nextCategoryOrder = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM categories').get().n;
@@ -161,6 +199,8 @@ const parseJson = value => {
 const externalProductId = row => String(row.firestore_id || row.id);
 const productData = row => ({
   id: externalProductId(row), name: row.name, price: Number(row.price),
+  discountPercent: Number(row.discount_percent || 0),
+  discountedPrice: Math.round(Number(row.price) * (1 - Number(row.discount_percent || 0) / 100) * 100) / 100,
   category: row.category || 'food', department: row.category || 'food',
   categoryId: String(row.category_id || row.sub_category || row.category || 'food'), sub_category: row.sub_category || '',
   description: row.description || '', imagePath: row.image_path || '',
@@ -292,8 +332,8 @@ export function deleteRecord(collectionPath, id) {
 
 export function findUserByToken(token) {
   const digest = tokenDigest(token);
-  const row = db.prepare(`SELECT u.id, u.email, u.name, u.phone, u.photo_url, u.role
-    FROM auth_sessions s JOIN auth_users u ON u.id=s.user_id
+  const row = db.prepare(`SELECT u.id, u.email, u.name, u.phone, u.photo_url, COALESCE(st.role,u.role) AS role
+    FROM auth_sessions s JOIN auth_users u ON u.id=s.user_id LEFT JOIN staff st ON st.auth_user_id=u.id
     WHERE s.token_hash=? AND s.expires_at > ?`).get(digest, Date.now());
   return row ? { id: row.id, uid: row.id, email: row.email, role: row.role,
     user_metadata: { full_name: row.name, phone: row.phone || '', avatar_url: row.photo_url || '' } } : null;

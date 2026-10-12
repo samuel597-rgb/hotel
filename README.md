@@ -23,6 +23,10 @@ Sign in with **Admin Login**, then open **Products**. Add or edit a menu item wi
 
 The customer site is a responsive Progressive Web App. On a deployed HTTPS URL, Chrome and supported Android browsers can install it from the **Install App** button or the browser menu. On iPhone/iPad, open the site in Safari, tap **Share**, then **Add to Home Screen**. This installs a home-screen web app; it is not a native Play Store or App Store package. Local development still opens at `http://localhost:3000`.
 
+### Offline use
+
+Open the site at least once while online and allow it to finish loading before going offline. The service worker then keeps the app shell, the public menu/categories, general display settings, and product images already viewed on that device in its cache. Installing the PWA makes it easier to reopen from the home screen. While offline, customers can browse the cached menu and submit orders; those orders are stored in that browser's IndexedDB queue and sent to the API after internet access returns. Keep the page open until the order is accepted into the offline queue. Staff login, live account/order data, and images that have not yet been loaded still require connectivity. Offline orders are device-local until they sync, so clearing browser storage or using another device can lose queued orders.
+
 ## Free hosting
 
 The checked-in `render.yaml` defines a **free** Node web service. GitHub remains the code host; Render runs the API and serves the page. No persistent disk, paid database, payment integration, or other paid add-on is configured.
