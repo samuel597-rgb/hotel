@@ -32,15 +32,21 @@ function publishPos(event, data, tableId = null) {
   const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const [response, clientTableId] of liveClients) if (tableId && String(clientTableId) === String(tableId)) response.write(message);
 }
-const allowedOrigins = new Set([
-  'http://localhost:3000', 'http://localhost:5173',
-  ...(process.env.CORS_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean)
-]);
+const staticOrigins = [
+  'https://hotel1-cf53.onrender.com',
+  'https://hoteli-poa.co.ke',
+  'https://www.hoteli-poa.co.ke',
+  'http://localhost:3000',
+  'http://localhost:5173'
+];
+const extraOrigins = (process.env.CORS_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean);
+const allowedOrigins = new Set([...staticOrigins, ...extraOrigins]);
 const corsOptions = {
   origin(origin, done) {
     if (!origin || allowedOrigins.has(origin)) return done(null, true);
-    return done(null, false);
+    return done(new Error(`CORS blocked origin: ${origin}`));
   },
+  credentials: true,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization','x-auth-token']
 };
@@ -53,13 +59,16 @@ const jsonResponse = (res, status, payload) => res.status(status).json(payload);
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 const crossOriginCors = cors(corsOptions);
-app.use((req,res,next) => {
+function isSameOrigin(req) {
   const origin=req.get('Origin');
-  const currentOrigin=`${req.protocol}://${req.get('host')}`;
+  return !origin || origin===`${req.protocol}://${req.get('host')}`;
+}
+app.use((req,res,next) => {
   // Same-origin requests do not require CORS, regardless of Render's generated hostname.
-  if (!origin || origin===currentOrigin) return next();
+  if (isSameOrigin(req)) return next();
   return crossOriginCors(req,res,next);
 });
+app.options('*',(req,res,next) => isSameOrigin(req) ? res.sendStatus(204) : crossOriginCors(req,res,next));
 app.use(express.json({ limit: '1mb' }));
 
 function bearerToken(req) { return /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')?.[1] || ''; }
@@ -694,6 +703,7 @@ app.use(express.static(webRoot, { index: false, maxAge: '1h' }));
 app.use((error, _req, res, _next) => {
   console.error('Request failed:', error?.message || error);
   if (res.headersSent) return;
+  if (error.message?.startsWith('CORS blocked origin:')) return res.status(403).json({ error: error.message });
   if (error instanceof multer.MulterError) return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'Image must be 5 MB or smaller.' : error.message });
   if (error.message?.startsWith('Only JPG')) return res.status(400).json({ error: error.message });
   return res.status(error.status || 500).json({ error: error.status ? error.message : 'The request could not be completed.' });
