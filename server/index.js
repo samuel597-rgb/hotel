@@ -1,17 +1,37 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import multer from 'multer';
+import QRCode from 'qrcode';
 import { db, deleteRecord, deleteSession, findUserByToken, issueSession, readRecords, writeRecord } from './sqlite.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, '../hosting');
+const uploadsDir = path.resolve(process.env.UPLOAD_DIR || path.join(here, '../uploads'));
+fs.mkdirSync(uploadsDir, { recursive: true });
+const imageExtensions = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
+const productUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, done) => done(null, uploadsDir),
+    filename: (_req, file, done) => done(null, `${Date.now()}-${crypto.randomUUID()}${imageExtensions[file.mimetype] || ''}`)
+  }),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, done) => imageExtensions[file.mimetype]
+    ? done(null, true) : done(new Error('Only JPG, PNG, or WEBP product images are accepted.'))
+});
+const liveClients = new Map();
+function publishPos(event, data, tableId = null) {
+  const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const [response, clientTableId] of liveClients) if (tableId && String(clientTableId) === String(tableId)) response.write(message);
+}
 const allowedOrigins = new Set([
   'http://localhost:3000', 'http://localhost:5173',
   ...(process.env.CORS_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean)
@@ -65,6 +85,10 @@ async function ensureDemoStaffAccounts() {
     db.prepare(`INSERT INTO auth_users(id,email,name,password_hash,role) VALUES(?,?,?,?,?)
       ON CONFLICT(email) DO UPDATE SET name=excluded.name,password_hash=excluded.password_hash,role=excluded.role`)
       .run(`demo-${account.role}`, account.email, account.name, passwordHash, account.role);
+    const user = db.prepare('SELECT id FROM auth_users WHERE email=?').get(account.email);
+    db.prepare(`INSERT INTO staff(auth_user_id,name,role,pin_hash) VALUES(?,?,?,?)
+      ON CONFLICT(auth_user_id) DO UPDATE SET name=excluded.name,role=excluded.role,pin_hash=excluded.pin_hash`)
+      .run(user.id, account.name, account.role, passwordHash);
   }
 }
 async function verifyPassword(password, stored) {
@@ -73,6 +97,14 @@ async function verifyPassword(password, stored) {
   const candidate = await scrypt(password, salt, 64);
   const expected = Buffer.from(hex, 'hex');
   return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+}
+function awardLoyaltyStamp(value) {
+  const phone=String(value||'').replace(/[^+0-9]/g,'').slice(0,20);
+  if(phone.length<7)return null;
+  db.prepare(`INSERT INTO loyalty_accounts(phone,stamps) VALUES(?,1)
+    ON CONFLICT(phone) DO UPDATE SET stamps=stamps+1,updated_at=CURRENT_TIMESTAMP`).run(phone);
+  const account=db.prepare('SELECT phone,stamps,updated_at AS updatedAt FROM loyalty_accounts WHERE phone=?').get(phone);
+  return {...account,rewardAvailable:account.stamps>=10};
 }
 function getStoredUser(email) { return db.prepare('SELECT * FROM auth_users WHERE email = ? COLLATE NOCASE').get(email); }
 function publicPath(pathname, id) {
@@ -123,18 +155,22 @@ app.post('/api/auth/signup', loginLimiter, asyncRoute(async (req, res) => {
   return jsonResponse(res, 201, { token, user: userSummary(row) });
 }));
 
-app.post('/api/auth/login', loginLimiter, asyncRoute(async (req, res) => {
+const handleLogin = asyncRoute(async (req, res) => {
   const identifier = safeEmail(req.body?.username || req.body?.email);
   const demoAccounts = { 'admin 1': 'demo-admin@hoteli.local', 'employee 1': 'demo-employee@hoteli.local' };
-  const email = demoAccounts[identifier] || identifier;
+  const email = demoAccounts[identifier] || (identifier.includes('@') ? identifier : `${identifier}@staff.hoteli.local`);
   const password = String(req.body?.password || '');
   const row = getStoredUser(email);
   if (!row || !(await verifyPassword(password, row.password_hash))) {
     return jsonResponse(res, 401, { error: 'Email or password is incorrect.' });
   }
   const token = issueSession(row.id);
-  return jsonResponse(res, 200, { token, user: userSummary(row) });
-}));
+  const user = userSummary(row);
+  return jsonResponse(res, 200, req.path === '/api/login'
+    ? { token, role: user.role, user }
+    : { token, user });
+});
+app.post(['/api/auth/login', '/api/login'], loginLimiter, handleLogin);
 
 app.get('/api/auth/session', requireAuth, (req, res) => jsonResponse(res, 200, { user: userSummary(req.user) }));
 app.post('/api/auth/logout', (req, res) => {
@@ -156,9 +192,239 @@ app.get('/api/me', requireAuth, (req, res) => {
   return res.json({ user: userSummary(req.user), role: req.user.role, profile });
 });
 
+app.use('/uploads', express.static(uploadsDir, { maxAge: '1d', immutable: true }));
+app.get('/api/settings', (_req, res) => {
+  const general = readRecords('settings', { id:'general' })[0]?.data || {};
+  return res.json(general);
+});
+app.put('/api/settings', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const incoming = req.body && typeof req.body === 'object' ? req.body : {};
+  const general = { ...(readRecords('settings', { id: 'general' })[0]?.data || {}), ...incoming };
+  general.hotelName = String(general.hotelName || 'HOTELI POA').slice(0, 120);
+  general.currency = 'KES';
+  general.taxRate = Math.max(0, Math.min(100, Number(general.taxRate) || 0));
+  general.taxMode = general.taxMode === 'excluded' ? 'excluded' : 'included';
+  writeRecord('settings', 'general', general);
+  for (const [key, value] of Object.entries(incoming)) {
+    if (key !== 'general') writeRecord('settings', key, value);
+  }
+  return res.json({ success: true, settings: general });
+});
+app.get('/api/tables', (_req, res) => res.json(db.prepare('SELECT id,floor,number,status FROM tables ORDER BY floor,number').all()));
+app.get('/api/tables/:id/display', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const table = db.prepare('SELECT id,floor,number,display_token FROM tables WHERE id=?').get(Number(req.params.id));
+  if (!table) return jsonResponse(res,404,{error:'Table not found.'});
+  const displayUrl = `/display?table=${encodeURIComponent(`${table.floor} ${table.number}`)}&token=${encodeURIComponent(table.display_token)}`;
+  return res.json({url:displayUrl,token:table.display_token,qrUrl:`/api/tables/${table.id}/qr.svg?token=${encodeURIComponent(table.display_token)}`});
+});
+app.get('/api/tables/:id/qr.svg', asyncRoute(async (req,res) => {
+  const table=db.prepare('SELECT id,floor,number,display_token FROM tables WHERE id=? AND display_token=?').get(Number(req.params.id),String(req.query.token||''));
+  if (!table) return jsonResponse(res,401,{error:'A valid table display token is required.'});
+  const displayUrl=new URL(`/display?table=${encodeURIComponent(`${table.floor} ${table.number}`)}&token=${encodeURIComponent(table.display_token)}`,`${req.protocol}://${req.get('host')}`).href;
+  const svg=await QRCode.toString(displayUrl,{type:'svg',margin:1,width:256,color:{dark:'#0A2540',light:'#FFFFFF'}});
+  return res.type('image/svg+xml').set('Cache-Control','private, no-store').send(svg);
+}));
+app.post('/api/tables', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const floor = String(req.body?.floor || 'Main Floor').trim().slice(0, 60);
+  const number = Number(req.body?.number);
+  if (!floor || !Number.isInteger(number) || number < 1) return jsonResponse(res, 400, { error: 'Floor and a positive table number are required.' });
+  try {
+    const info = db.prepare('INSERT INTO tables(floor,number,status) VALUES(?,?,?)').run(floor, number, 'available');
+    return jsonResponse(res, 201, db.prepare('SELECT * FROM tables WHERE id=?').get(info.lastInsertRowid));
+  } catch (error) { if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return jsonResponse(res, 409, { error: 'That table already exists on this floor.' }); throw error; }
+});
+app.put('/api/tables/:id/status', requireAuth, allowRoles('waiter','cashier','supervisor','manager','admin'), (req, res) => {
+  const status = String(req.body?.status || '');
+  if (!['available','occupied','reserved','cleaning'].includes(status)) return jsonResponse(res, 400, { error: 'Invalid table status.' });
+  const result = db.prepare('UPDATE tables SET status=? WHERE id=?').run(status, Number(req.params.id));
+  if (!result.changes) return jsonResponse(res, 404, { error: 'Table not found.' });
+  return res.json(db.prepare('SELECT * FROM tables WHERE id=?').get(Number(req.params.id)));
+});
+app.delete('/api/tables/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const result = db.prepare('DELETE FROM tables WHERE id=?').run(Number(req.params.id));
+  if (!result.changes) return jsonResponse(res, 404, { error: 'Table not found.' });
+  return res.status(204).end();
+});
+app.get('/api/staff', requireAuth, allowRoles('manager','admin'), (_req, res) => res.json(db.prepare(`
+  SELECT s.id,s.name,s.role,s.auth_user_id AS userId,u.email FROM staff s LEFT JOIN auth_users u ON u.id=s.auth_user_id ORDER BY s.name COLLATE NOCASE
+`).all()));
+app.post('/api/staff', requireAuth, allowRoles('manager','admin'), asyncRoute(async (req, res) => {
+  const name = String(req.body?.name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const username = String(req.body?.username || '').trim().toLowerCase().slice(0, 60);
+  const role = ['waiter','cashier','supervisor','manager'].includes(req.body?.role) ? req.body.role : 'waiter';
+  const password = String(req.body?.password || '');
+  if (name.length < 2 || !/^[a-z0-9._-]{2,60}$/.test(username) || password.length < 8) return jsonResponse(res, 400, { error: 'Enter a name, username, and password of at least 8 characters.' });
+  const email = `${username}@staff.hoteli.local`, id = crypto.randomUUID(), hash = await createPasswordHash(password);
+  try {
+    db.prepare('INSERT INTO auth_users(id,email,name,password_hash,role) VALUES(?,?,?,?,?)').run(id,email,name,hash,role);
+    db.prepare('INSERT INTO staff(auth_user_id,name,role,pin_hash) VALUES(?,?,?,?)').run(id,name,role,hash);
+  } catch (error) { if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return jsonResponse(res,409,{error:'That username already exists.'}); throw error; }
+  return jsonResponse(res,201,{id,userId:id,name,username,role});
+}));
+app.put('/api/staff/:id', requireAuth, allowRoles('manager','admin'), asyncRoute(async (req, res) => {
+  const member = db.prepare('SELECT * FROM staff WHERE id=?').get(Number(req.params.id));
+  if (!member) return jsonResponse(res,404,{error:'Staff member not found.'});
+  const name = String(req.body?.name ?? member.name).trim().slice(0,120);
+  const role = ['waiter','cashier','supervisor','manager'].includes(req.body?.role) ? req.body.role : member.role;
+  db.prepare('UPDATE staff SET name=?,role=? WHERE id=?').run(name,role,member.id);
+  if (member.auth_user_id) {
+    const password = String(req.body?.password || '');
+    if (password.length >= 8) db.prepare('UPDATE auth_users SET name=?,role=?,password_hash=? WHERE id=?').run(name,role,await createPasswordHash(password),member.auth_user_id);
+    else db.prepare('UPDATE auth_users SET name=?,role=? WHERE id=?').run(name,role,member.auth_user_id);
+  }
+  return res.json({id:member.id,name,role});
+}));
+app.delete('/api/staff/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const member = db.prepare('SELECT * FROM staff WHERE id=?').get(Number(req.params.id));
+  if (!member) return jsonResponse(res,404,{error:'Staff member not found.'});
+  if (member.auth_user_id?.startsWith('demo-')) return jsonResponse(res,409,{error:'Built-in demo accounts cannot be deleted.'});
+  db.prepare('DELETE FROM staff WHERE id=?').run(member.id);
+  if (member.auth_user_id) db.prepare('DELETE FROM auth_users WHERE id=?').run(member.auth_user_id);
+  return res.status(204).end();
+});
+app.get('/api/register/current',requireAuth,allowRoles('cashier','supervisor','manager','admin'),(_req,res)=>res.json(db.prepare("SELECT * FROM register_sessions WHERE status='open' ORDER BY id DESC LIMIT 1").get()||null));
+app.post('/api/register/open',requireAuth,allowRoles('cashier','supervisor','manager','admin'),(req,res)=>{
+  const staffId=db.prepare('SELECT id FROM staff WHERE auth_user_id=?').get(req.user.id)?.id||null;
+  const current=db.prepare("SELECT id FROM register_sessions WHERE status='open' LIMIT 1").get();
+  if(current) return jsonResponse(res,409,{error:'A register is already open.',id:current.id});
+  const openingCash=Math.max(0,Number(req.body?.openingCash)||0),openingNote=String(req.body?.openingNote||'').slice(0,500);
+  const result=db.prepare('INSERT INTO register_sessions(status,opening_cash,opening_note,staff_id) VALUES(?,?,?,?)').run('open',openingCash,openingNote,staffId);
+  return jsonResponse(res,201,db.prepare('SELECT * FROM register_sessions WHERE id=?').get(result.lastInsertRowid));
+});
+app.post('/api/register/close',requireAuth,allowRoles('cashier','supervisor','manager','admin'),(req,res)=>{
+  const current=db.prepare("SELECT * FROM register_sessions WHERE status='open' ORDER BY id DESC LIMIT 1").get();
+  if(!current) return jsonResponse(res,404,{error:'No register is open.'});
+  db.prepare("UPDATE register_sessions SET status='closed',closed_at=CURRENT_TIMESTAMP WHERE id=?").run(current.id);
+  return res.json({success:true,id:current.id});
+});
+app.get('/api/loyalty/:phone',requireAuth,allowRoles('waiter','cashier','supervisor','manager','admin'),(req,res)=>{
+  const phone=String(req.params.phone||'').replace(/[^+0-9]/g,'').slice(0,20);
+  const account=db.prepare('SELECT phone,stamps,updated_at AS updatedAt FROM loyalty_accounts WHERE phone=?').get(phone)||{phone,stamps:0};
+  return res.json({...account,rewardAvailable:account.stamps>=10});
+});
+app.post('/api/loyalty/stamp',requireAuth,allowRoles('waiter','cashier','supervisor','manager','admin'),(req,res)=>{
+  const phone=String(req.body?.phone||'').replace(/[^+0-9]/g,'').slice(0,20);
+  if(phone.length<7) return jsonResponse(res,400,{error:'Enter a valid phone number.'});
+  return res.json(awardLoyaltyStamp(phone));
+});
+app.post('/api/loyalty/redeem',requireAuth,allowRoles('cashier','supervisor','manager','admin'),(req,res)=>{
+  const phone=String(req.body?.phone||'').replace(/[^+0-9]/g,'').slice(0,20);
+  const account=db.prepare('SELECT phone,stamps FROM loyalty_accounts WHERE phone=?').get(phone);
+  if(!account||account.stamps<10)return jsonResponse(res,409,{error:'Ten paid-order stamps are needed for a free item.'});
+  db.prepare('UPDATE loyalty_accounts SET stamps=stamps-10,updated_at=CURRENT_TIMESTAMP WHERE phone=?').run(phone);
+  return res.json({...db.prepare('SELECT phone,stamps,updated_at AS updatedAt FROM loyalty_accounts WHERE phone=?').get(phone),redeemed:true});
+});
+app.get(['/api/stream','/api/pos/stream'], (req, res) => {
+  const displayToken = String(req.query.token || '');
+  const table = displayToken ? db.prepare('SELECT id,floor,number FROM tables WHERE display_token=?').get(displayToken) : null;
+  if (!table) return jsonResponse(res,401,{error:'A valid table display token is required.'});
+  res.set({ 'Content-Type':'text/event-stream', 'Cache-Control':'no-cache, no-transform', Connection:'keep-alive', 'X-Accel-Buffering':'no' });
+  res.flushHeaders?.();
+  liveClients.set(res,table.id);
+  res.write(`event: snapshot\ndata: ${JSON.stringify({ table:`${table.floor} ${table.number}`, items:[] })}\n\n`);
+  const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), 20000);
+  req.on('close', () => { clearInterval(keepAlive); liveClients.delete(res); });
+});
+app.post('/api/pos/cart', optionalAuth, (req, res) => {
+  const tableId=Number(req.body?.tableId);
+  if (!Number.isInteger(tableId) || !db.prepare('SELECT id FROM tables WHERE id=?').get(tableId)) return res.status(204).end();
+  const items = Array.isArray(req.body?.items) ? req.body.items.slice(0,100).map(item => ({
+    productId:String(item.productId || '').slice(0,128), name:String(item.name || '').slice(0,120), qty:Math.max(1,Math.min(1000,Number(item.qty)||1)), price:Math.max(0,Number(item.price)||0)
+  })) : [];
+  publishPos('cart', { table:String(req.body?.table || '').slice(0,40), channel:String(req.body?.channel || 'takeout'), items },tableId);
+  return res.status(204).end();
+});
 app.get('/api/products', (req, res) => {
   const rows = readRecords('products');
   return res.json(rows.map(row => ({ id: row.id, ...row.data })).filter(item => item.isAvailable !== false));
+});
+
+const categoryLookup = value => db.prepare('SELECT * FROM categories WHERE CAST(id AS TEXT)=? OR name=? COLLATE NOCASE').get(String(value ?? ''), String(value ?? ''));
+function productRowById(value) {
+  return db.prepare('SELECT * FROM products WHERE CAST(id AS TEXT)=? OR firestore_id=?').get(String(value), String(value));
+}
+function respondProduct(res, row, status = 200) {
+  if (!row) return jsonResponse(res, 404, { error: 'Product not found.' });
+  const record = readRecords('products', { id: String(row.id) })[0];
+  return jsonResponse(res, status, { id: record?.id || String(row.id), ...record?.data });
+}
+app.post('/api/products', requireAuth, allowRoles('manager','admin'), productUpload.single('image'), (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 120);
+  const price = Number(req.body?.price);
+  const category = categoryLookup(req.body?.category_id || req.body?.categoryId);
+  if (!name || !Number.isFinite(price) || price < 0 || !category) return jsonResponse(res, 400, { error: 'Name, category, and a non-negative price are required.' });
+  const imagePath = req.file ? `/uploads/${req.file.filename}` : '';
+  const info = db.prepare(`INSERT INTO products(name,price,category,category_id,sub_category,description,image_path,image_url,is_available,active)
+    VALUES(?,?,?,?,?,?,?,?,1,1)`).run(name, price, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
+    String(req.body?.description || '').slice(0, 2000), imagePath || null, imagePath);
+  return respondProduct(res, db.prepare('SELECT * FROM products WHERE id=?').get(info.lastInsertRowid), 201);
+});
+app.put('/api/products/:id', requireAuth, allowRoles('manager','admin'), productUpload.single('image'), (req, res) => {
+  const existing = productRowById(req.params.id);
+  if (!existing) return jsonResponse(res, 404, { error: 'Product not found.' });
+  const name = String(req.body?.name ?? existing.name).trim().slice(0, 120);
+  const price = req.body?.price == null ? existing.price : Number(req.body.price);
+  const category = req.body?.category_id || req.body?.categoryId ? categoryLookup(req.body.category_id || req.body.categoryId)
+    : db.prepare('SELECT * FROM categories WHERE id=?').get(existing.category_id);
+  if (!name || !Number.isFinite(price) || price < 0 || !category) return jsonResponse(res, 400, { error: 'Name, category, and a non-negative price are required.' });
+  const imagePath = req.file ? `/uploads/${req.file.filename}` : (existing.image_path || '');
+  db.prepare(`UPDATE products SET name=?,price=?,category=?,category_id=?,sub_category=?,description=?,image_path=?,image_url=?,active=1,is_available=1 WHERE id=?`)
+    .run(name, price, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
+      String(req.body?.description ?? existing.description ?? '').slice(0, 2000), imagePath || null, imagePath, existing.id);
+  return respondProduct(res, db.prepare('SELECT * FROM products WHERE id=?').get(existing.id));
+});
+app.delete('/api/products/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const product = productRowById(req.params.id);
+  if (!product) return jsonResponse(res, 404, { error: 'Product not found.' });
+  db.prepare('UPDATE products SET active=0,is_available=0 WHERE id=?').run(product.id);
+  return res.status(204).end();
+});
+app.post('/api/products/import-legacy', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  if (db.prepare("SELECT type FROM sqlite_master WHERE name='product'").get()?.type !== 'table') return jsonResponse(res,404,{error:'No physical product table is available to import.'});
+  const rows=db.prepare('SELECT * FROM product').all();
+  let imported=0,skipped=0;
+  const insert=db.prepare(`INSERT INTO products(name,price,category,category_id,sub_category,description,image_path,image_url,firestore_id,is_available,active)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
+  for (const row of rows) {
+    const externalId=String(row.firestore_id ?? row.id ?? '');
+    if (externalId && db.prepare('SELECT id FROM products WHERE firestore_id=? OR CAST(id AS TEXT)=?').get(externalId,externalId)) { skipped++; continue; }
+    const name=String(row.name || row.product_name || '').trim();
+    if (!name || db.prepare('SELECT id FROM products WHERE name=? COLLATE NOCASE').get(name)) { skipped++; continue; }
+    const categoryName=String(row.sub_category || row.categoryId || row.category || 'Food').trim();
+    let category=categoryLookup(categoryName);
+    if (!category) { const info=db.prepare('INSERT INTO categories(name,icon,sort_order) VALUES(?,?,?)').run(categoryName,'🍽️',Number(db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 n FROM categories').get().n)); category=db.prepare('SELECT * FROM categories WHERE id=?').get(info.lastInsertRowid); }
+    const image=String(row.image_path || row.image_url || row.imageUrl || '');
+    const active=row.active===0 || row.is_available===0 || row.isAvailable===false ? 0 : 1;
+    insert.run(name,Number(row.price)||0,String(row.department || row.category || 'food'),category.id,category.name,String(row.description||''),image||null,image,externalId||null,active,active);
+    imported++;
+  }
+  return res.json({success:true,imported,skipped});
+});
+
+app.get('/api/categories', (_req, res) => res.json(db.prepare('SELECT id,name,icon,sort_order FROM categories WHERE active=1 ORDER BY sort_order,name COLLATE NOCASE').all()));
+app.post('/api/categories', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 80);
+  if (!name) return jsonResponse(res, 400, { error: 'Category name is required.' });
+  try {
+    const info = db.prepare('INSERT INTO categories(name,icon,sort_order) VALUES(?,?,?)').run(name, String(req.body?.icon || '🍽️'), Number(req.body?.sort_order) || 0);
+    return jsonResponse(res, 201, db.prepare('SELECT * FROM categories WHERE id=?').get(info.lastInsertRowid));
+  } catch (error) { if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return jsonResponse(res, 409, { error: 'That category already exists.' }); throw error; }
+});
+app.put('/api/categories/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const current = db.prepare('SELECT * FROM categories WHERE id=?').get(Number(req.params.id));
+  if (!current) return jsonResponse(res, 404, { error: 'Category not found.' });
+  const name = String(req.body?.name ?? current.name).trim().slice(0, 80);
+  db.prepare('UPDATE categories SET name=?,icon=?,sort_order=? WHERE id=?').run(name, String(req.body?.icon ?? current.icon), Number(req.body?.sort_order ?? current.sort_order), current.id);
+  db.prepare('UPDATE products SET sub_category=? WHERE category_id=?').run(name, current.id);
+  return res.json(db.prepare('SELECT * FROM categories WHERE id=?').get(current.id));
+});
+app.delete('/api/categories/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.prepare('SELECT id FROM categories WHERE id=?').get(id)) return jsonResponse(res, 404, { error: 'Category not found.' });
+  const used = db.prepare('SELECT COUNT(*) AS count FROM products WHERE category_id=? AND active=1').get(id).count;
+  if (used) return jsonResponse(res, 409, { error: 'Move or remove products in this category first.' });
+  db.prepare('UPDATE categories SET active=0 WHERE id=?').run(id);
+  return res.status(204).end();
 });
 
 app.get('/api/records', (req, res) => {
@@ -219,6 +485,12 @@ app.get('/api/orders', requireAuth, (req, res) => {
   return res.json(rows.map(row => ({ id: row.id, ...row.data })).filter(order => !order.archivedAt)
     .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0)));
 });
+app.get('/api/orders/:id', requireAuth, (req, res) => {
+  const row = readRecords('orders', { id: req.params.id })[0];
+  if (!row) return jsonResponse(res,404,{error:'Order not found.'});
+  if (row.data.customerId !== req.user.id && !['waiter','cashier','supervisor','manager','admin'].includes(req.user.role)) return jsonResponse(res,403,{error:'You cannot view this order.'});
+  return res.json({ id: row.id, ...row.data });
+});
 app.post('/api/orders', optionalAuth, (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
   if (!items.length || items.length > 100) return jsonResponse(res, 400, { error: 'An order must contain between 1 and 100 items.' });
@@ -237,27 +509,83 @@ app.post('/api/orders', optionalAuth, (req, res) => {
     lines.push({ id: crypto.randomUUID(), productId, name: product.name, qty: quantity, quantity, price, subtotal: lineTotal });
   }
   const settings = readRecords('settings', { id: 'general' })[0]?.data || {};
-  const tax = subtotal * Math.max(0, Number(settings.taxRate) || 0) / 100;
+  const taxRate = Math.max(0, Number(settings.taxRate) || 0);
+  const taxMode = settings.taxMode === 'excluded' ? 'excluded' : 'included';
+  const tax = taxMode === 'included' ? subtotal - subtotal / (1 + taxRate / 100) : subtotal * taxRate / 100;
   const tip = Math.max(0, Number(req.body.tip) || 0);
   const id = validRecordId(req.body.clientWriteId);
   const role = req.user?.role || 'customer';
-  const order = { id, table: String(req.body.table || '').slice(0, 40), guests: Math.max(1, Math.min(100, Number(req.body.guests || 1))),
+  const channel = ['dine_in','takeout','delivery'].includes(req.body.channel) ? req.body.channel : (req.body.table ? 'dine_in' : 'takeout');
+  const order = { id, table: String(req.body.table || '').slice(0, 40), tableId: Number(req.body.tableId) || null, channel, guests: Math.max(1, Math.min(100, Number(req.body.guests || 1))),
     customer: String(req.body.customer || (req.user?.user_metadata.full_name || '')).slice(0, 120), customerId: role === 'customer' ? req.user?.id || null : null,
+    customerPhone:String(req.body.customerPhone||'').replace(/[^+0-9]/g,'').slice(0,20),
     waiterId: role === 'customer' ? null : req.user.id,
     waiterName: String(req.user?.user_metadata.full_name || req.user?.email || 'Guest customer').slice(0, 120),
-    status: 'pending', paymentStatus: 'pending', paymentMethod: ['cash','card','mpesa','stripe'].includes(req.body.paymentMethod) ? req.body.paymentMethod : 'cash',
-    subtotal, tax, tip, total: subtotal + tax + tip, currency: 'KES', rating: Math.max(0, Math.min(5, Number(req.body.rating) || 0)),
-    feedback: String(req.body.feedback || '').slice(0, 2000), feedbackImageUrl: String(req.body.feedbackImageUrl || '').slice(0, 2000),
+    status: 'new', paymentStatus: ['cash','card'].includes(req.body.paymentMethod) && req.user?.role !== 'customer' ? 'paid' : 'pending', paymentMethod: ['cash','card','mpesa'].includes(req.body.paymentMethod) ? req.body.paymentMethod : 'cash',
+    subtotal, tax, taxMode, taxRate, tip, total: subtotal + (taxMode === 'included' ? 0 : tax) + tip, currency: 'KES', rating: Math.max(0, Math.min(5, Number(req.body.rating) || 0)),
+    feedback: String(req.body.feedback || '').slice(0, 2000), riderName: String(req.body.riderName || '').slice(0,100), riderPhone: String(req.body.riderPhone || '').slice(0,40),
     createdAt: new Date().toISOString(), lines };
   writeRecord('orders', id, order, req.user?.id || null);
+  if(order.paymentStatus==='paid'&&order.customerPhone)order.loyalty=awardLoyaltyStamp(order.customerPhone);
+  if (order.tableId) db.prepare(`UPDATE tables SET status='occupied' WHERE id=?`).run(order.tableId);
+  publishPos('order', { id, status:order.status, total:order.total, table:order.table, channel:order.channel }, order.tableId);
   return jsonResponse(res, 201, { success: true, id, orderId: id, order, lines, synced: true });
+});
+app.put('/api/orders/:id/status', requireAuth, allowRoles('waiter','cashier','supervisor','manager','admin'), (req, res) => {
+  const nextStatus = String(req.body?.status || '');
+  if (!['new','preparing','ready','served','paid','cancelled'].includes(nextStatus)) return jsonResponse(res,400,{error:'Invalid order status.'});
+  const row = readRecords('orders',{id:req.params.id})[0];
+  if (!row) return jsonResponse(res,404,{error:'Order not found.'});
+  const order = { ...row.data, status: nextStatus, paymentStatus: nextStatus === 'paid' ? 'paid' : row.data.paymentStatus };
+  writeRecord('orders',req.params.id,order,row.owner_id);
+  publishPos('order', { id:req.params.id, status:order.status, total:order.total, table:order.table, channel:order.channel }, order.tableId);
+  return res.json({id:req.params.id,...order});
+});
+app.post('/api/orders/:id/split',requireAuth,allowRoles('cashier','supervisor','manager','admin'),(req,res)=>{
+  const source=readRecords('orders',{id:req.params.id})[0];
+  if(!source)return jsonResponse(res,404,{error:'Order not found.'});
+  if(source.data.paymentStatus==='paid')return jsonResponse(res,409,{error:'Paid orders cannot be split.'});
+  const requested=Array.isArray(req.body?.lines)?req.body.lines:[];
+  if(!requested.length)return jsonResponse(res,400,{error:'Select at least one order line to split.'});
+  const remaining=[...source.data.lines],splitLines=[];
+  for(const selection of requested){
+    const index=remaining.findIndex(line=>String(line.id)===String(selection.id));
+    if(index<0)continue;
+    const line=remaining[index],qty=Math.min(Number(line.qty||line.quantity),Math.max(0,Number(selection.qty)||0));
+    if(!qty)continue;
+    splitLines.push({...line,qty,quantity:qty,subtotal:Number(line.price)*qty});
+    const left=Number(line.qty||line.quantity)-qty;
+    if(left)remaining[index]={...line,qty:left,quantity:left,subtotal:Number(line.price)*left};else remaining.splice(index,1);
+  }
+  if(!splitLines.length||!remaining.length)return jsonResponse(res,400,{error:'A split must leave at least one item on each order.'});
+  const sourceSubtotal=remaining.reduce((sum,line)=>sum+Number(line.price)*Number(line.qty||line.quantity),0);
+  const splitSubtotal=splitLines.reduce((sum,line)=>sum+Number(line.price)*Number(line.qty||line.quantity),0);
+  const ratio=Number(source.data.subtotal)>0?splitSubtotal/Number(source.data.subtotal):0;
+  const newId=crypto.randomUUID();
+  const splitOrder={...source.data,id:newId,lines:splitLines,subtotal:splitSubtotal,tax:Number(source.data.tax||0)*ratio,tip:Number(source.data.tip||0)*ratio,total:splitSubtotal+((source.data.taxMode==='excluded')?Number(source.data.tax||0)*ratio:0)+Number(source.data.tip||0)*ratio,createdAt:new Date().toISOString()};
+  const remainingOrder={...source.data,lines:remaining,subtotal:sourceSubtotal,tax:Number(source.data.tax||0)*(1-ratio),tip:Number(source.data.tip||0)*(1-ratio),total:sourceSubtotal+((source.data.taxMode==='excluded')?Number(source.data.tax||0)*(1-ratio):0)+Number(source.data.tip||0)*(1-ratio)};
+  writeRecord('orders',req.params.id,remainingOrder,source.owner_id);writeRecord('orders',newId,splitOrder,source.owner_id);
+  return jsonResponse(res,201,{success:true,source:remainingOrder,split:splitOrder});
+});
+app.post('/api/orders/merge',requireAuth,allowRoles('cashier','supervisor','manager','admin'),(req,res)=>{
+  const ids=Array.isArray(req.body?.orderIds)?[...new Set(req.body.orderIds.map(String))]:[];
+  if(ids.length<2||ids.length>10)return jsonResponse(res,400,{error:'Choose 2 to 10 orders to merge.'});
+  const orders=ids.map(id=>readRecords('orders',{id})[0]);
+  if(orders.some(order=>!order))return jsonResponse(res,404,{error:'One or more orders were not found.'});
+  if(orders.some(order=>order.data.paymentStatus==='paid'))return jsonResponse(res,409,{error:'Paid orders cannot be merged.'});
+  const primary=orders[0],lines=orders.flatMap(order=>order.data.lines||[]),subtotal=orders.reduce((sum,order)=>sum+Number(order.data.subtotal||0),0),tax=orders.reduce((sum,order)=>sum+Number(order.data.tax||0),0),tip=orders.reduce((sum,order)=>sum+Number(order.data.tip||0),0);
+  const merged={...primary.data,lines,subtotal,tax,tip,total:orders.reduce((sum,order)=>sum+Number(order.data.total||0),0),mergedOrderIds:ids.slice(1)};
+  writeRecord('orders',primary.id,merged,primary.owner_id);
+  for(const source of orders.slice(1))writeRecord('orders',source.id,{...source.data,archivedAt:new Date().toISOString(),mergedInto:primary.id},source.owner_id);
+  return res.json({success:true,order:merged});
 });
 app.patch('/api/orders/:id/payment', requireAuth, allowRoles('cashier','supervisor','manager','admin'), (req, res) => {
   const row = readRecords('orders', { id: req.params.id })[0];
   if (!row) return jsonResponse(res, 404, { error: 'Order not found.' });
   if (row.data.paymentStatus === 'paid') return jsonResponse(res, 409, { error: 'This order is already paid.' });
   writeRecord('orders', req.params.id, { ...row.data, status: 'paid', paymentStatus: 'paid', paymentMethod: req.body?.paymentMethod || 'cash', paidAt: new Date().toISOString() }, row.owner_id);
-  return res.json({ success: true });
+  const loyalty=row.data.customerPhone?awardLoyaltyStamp(row.data.customerPhone):null;
+  return res.json({ success: true, loyalty });
 });
 app.patch('/api/orders/:id/archive', requireAuth, allowRoles('manager','admin'), (req, res) => {
   const row = readRecords('orders', { id: req.params.id })[0];
@@ -274,21 +602,10 @@ app.post('/api/messages', requireAuth, allowRoles('waiter','cashier','supervisor
   writeRecord('messages', id, data, req.user.id);
   return jsonResponse(res, 201, { success: true, id, data });
 });
-app.post('/api/products', requireAuth, allowRoles('manager','admin'), (req, res) => {
-  const name = String(req.body?.name || '').trim(), price = Number(req.body?.price), categoryId = String(req.body?.categoryId || '');
-  if (!name || !categoryId || !Number.isFinite(price) || price < 0) return jsonResponse(res, 400, { error: 'Name, category, and a non-negative price are required.' });
-  const id = validRecordId(req.body.clientWriteId);
-  writeRecord('products', id, { ...req.body, id, name, price, categoryId, isAvailable: req.body.isAvailable !== false, createdAt: new Date().toISOString() }, req.user.id);
-  return jsonResponse(res, 201, { success: true, id });
-});
-app.put('/api/products/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
-  const previous = readRecords('products', { id: req.params.id })[0];
-  if (!previous) return jsonResponse(res, 404, { error: 'Product not found.' });
-  writeRecord('products', req.params.id, { ...previous.data, ...req.body, id: req.params.id }, null);
-  return res.json({ success: true, id: req.params.id });
-});
 app.put('/api/settings/general', requireAuth, allowRoles('manager','admin'), (req, res) => {
-  const data = { id: 'general', hotelName: String(req.body?.hotelName || 'HOTELI POA').slice(0, 120), currency: 'KES', taxRate: Math.max(0, Math.min(100, Number(req.body?.taxRate) || 0)) };
+  const data = { ...(readRecords('settings', { id: 'general' })[0]?.data || {}), ...req.body,
+    id: 'general', hotelName: String(req.body?.hotelName || 'HOTELI POA').slice(0, 120), currency: 'KES',
+    taxRate: Math.max(0, Math.min(100, Number(req.body?.taxRate) || 0)), taxMode: req.body?.taxMode === 'excluded' ? 'excluded' : 'included' };
   writeRecord('settings', 'general', data);
   return res.json({ success: true });
 });
@@ -312,12 +629,17 @@ if (process.env.USE_FIREBASE === 'true') console.warn('USE_FIREBASE is ignored; 
 
 await ensureDemoStaffAccounts();
 
+app.get('/admin', (_req, res) => res.redirect('/app/#dashboard'));
+app.get('/employee', (_req, res) => res.redirect('/app/#pos'));
+app.get('/display', (_req, res) => res.sendFile(path.join(webRoot, 'display.html')));
 app.get(['/','/index.html','/auth.html'], (_req, res) => res.sendFile(path.join(webRoot, 'app/index.html')));
 app.get(['/app','/app/'], (_req, res) => res.sendFile(path.join(webRoot, 'app/index.html')));
 app.use(express.static(webRoot, { index: false, maxAge: '1h' }));
 app.use((error, _req, res, _next) => {
   console.error('Request failed:', error?.message || error);
   if (res.headersSent) return;
+  if (error instanceof multer.MulterError) return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'Image must be 5 MB or smaller.' : error.message });
+  if (error.message?.startsWith('Only JPG')) return res.status(400).json({ error: error.message });
   return res.status(error.status || 500).json({ error: error.status ? error.message : 'The request could not be completed.' });
 });
 

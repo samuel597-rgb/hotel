@@ -16,6 +16,7 @@ const files = [
 ];
 
 fs.mkdirSync(path.join(hosting, 'app'), { recursive: true });
+fs.copyFileSync(path.join(root, 'display.html'), path.join(hosting, 'display.html'));
 for (const [source, target] of files) fs.copyFileSync(path.join(root, source), path.join(hosting, target));
 fs.copyFileSync(path.join(root, 'app', 'index.html'), path.join(hosting, 'app', 'index.html'));
 fs.mkdirSync(path.join(hosting, 'icons'), { recursive: true });

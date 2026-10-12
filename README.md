@@ -15,6 +15,10 @@ The home page opens directly to the customer menu. Customers can browse and plac
 
 The database file and SQLite journal files are ignored by Git. Do not commit or upload `hoteli_poa.db`; the repository contains the schema and menu seed, not your local records. New accounts are local to that database. New accounts start as customers. To grant staff access, create the account and run `npm run promote -- user@example.com manager` (or choose `waiter`, `cashier`, `supervisor`, or `admin`).
 
+## Admin guide — managing products and images
+
+Sign in with **Admin Login**, then open **Products**. Add or edit a menu item with a name, price, category, description, and optional JPG, PNG, or WEBP image (up to 5 MB). Product images are saved under `uploads/`; the product row stores the `/uploads/...` path. Delete hides a product from the customer catalog while retaining its order history. Use **Floor & Tables** to change table status, create staff logins and categories, choose whether prices include tax, and open the demo register. The **Kitchen Display** view advances active orders through new, preparing, ready, and served. Each table has a token-protected QR link to a secondary customer display. Keep the `uploads/` directory alongside the database during local development; both are ephemeral on free hosting.
+
 ## Browser and phone app
 
 The customer site is a responsive Progressive Web App. On a deployed HTTPS URL, Chrome and supported Android browsers can install it from the **Install App** button or the browser menu. On iPhone/iPad, open the site in Safari, tap **Share**, then **Add to Home Screen**. This installs a home-screen web app; it is not a native Play Store or App Store package. Local development still opens at `http://localhost:3000`.
@@ -32,7 +36,7 @@ To use GitHub Pages for the static frontend instead, point `window.POS_API_BASE_
 ## Demo limitations
 
 - Email/password accounts are stored locally with scrypt password hashes. Existing Firebase/Supabase accounts are not imported; create new demo accounts.
-- Google, Facebook, phone sign-in, email password reset, image uploads, Stripe, and M-Pesa are disabled in this SQLite-only demo.
+- Google, Facebook, phone sign-in, email password reset, profile photo uploads, Stripe, and M-Pesa are disabled in this SQLite-only demo. Product images are local files under `uploads/` and may be lost on ephemeral hosts.
 - The frontend polls the API for changes because SQLite has no hosted realtime service.
 - `USE_FIREBASE=false` is recorded in `.env.example` and the free Render Blueprint. There are no active Firebase imports, initialization calls, or API requests. Historical source remains under `firebase-backup/` without deployment configuration or credentials.
 

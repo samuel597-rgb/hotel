@@ -1,4 +1,4 @@
-const CACHE = 'sams-hotel-sqlite-v3';
+const CACHE = 'sams-hotel-sqlite-v4';
 const APP_CACHE_PREFIX = 'sams-hotel-';
 const ASSETS = [
   '/', '/app/', '/auth.html', '/auth.js', '/styles.css', '/icons/logo-192.png', '/icons/logo-512.png', '/icons/logo-180.png',
@@ -36,6 +36,8 @@ self.addEventListener('fetch', event => {
     })));
     return;
   }
+
+  if (['/login','/admin','/employee','/display'].includes(url.pathname)) return;
 
   // Authentication settings and API responses must always be fetched live.
   if (url.pathname.startsWith('/api/') || url.pathname === '/runtime-config.json') return;

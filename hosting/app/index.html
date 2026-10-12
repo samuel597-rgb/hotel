@@ -195,11 +195,11 @@
               <input x-show="root.role !== 'customer'" placeholder="Customer" x-model="order.customer" class="col-span-2 px-3 py-2 bg-slate-100 rounded-lg outline-none" />
             </div>
             <div x-show="root.role === 'customer'" class="mt-4 space-y-3">
+              <input x-model="order.customerPhone" type="tel" placeholder="Phone for loyalty stamps" class="w-full rounded-lg bg-slate-100 px-3 py-2 text-sm outline-none" />
+              <p class="text-xs text-slate-500">Earn 1 stamp per paid order; 10 stamps unlock a free item.</p>
               <div><p class="text-xs text-slate-500 mb-1">Rate your service</p><div class="flex gap-1"><template x-for="star in [1,2,3,4,5]" :key="star"><button type="button" @click="setRating(star)" class="text-2xl" :class="order.rating >= star ? 'text-amber-400' : 'text-slate-300'">★</button></template></div></div>
               <div><p class="text-xs text-slate-500 mb-1">Optional tip</p><div class="flex gap-2"><template x-for="percent in [5,10,15]" :key="percent"><button type="button" @click="setTipPercent(percent)" class="px-3 py-1.5 rounded-lg border text-xs" :class="order.tip === Math.round(subtotal()*percent/100) ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200'" x-text="percent + '%' "></button></template></div><input type="number" min="0" step="1" placeholder="Custom tip (KSH)" x-model.number="order.tip" class="mt-2 w-full px-3 py-2 bg-slate-100 rounded-lg outline-none" /></div>
               <textarea rows="2" placeholder="Review or feedback (optional)" x-model="order.feedback" class="w-full px-3 py-2 bg-slate-100 rounded-lg outline-none"></textarea>
-              <label class="block text-xs text-slate-500">Add a review photo (up to 5 MB)<input type="file" accept="image/*" @change="uploadReviewImage($event.target.files[0])" class="mt-1 block w-full text-sm" /></label>
-              <div x-show="order.feedbackImageUrl" class="flex items-center gap-3"><img :src="order.feedbackImageUrl" alt="Review photo preview" class="w-16 h-16 rounded-lg object-cover" /><button type="button" @click="order.feedbackImageUrl=''" class="text-xs text-red-600">Remove photo</button></div>
             </div>
           </div>
           <div class="flex-1 overflow-auto p-4 space-y-2">
@@ -250,10 +250,27 @@
           </section>
         </div>
 
+        <!-- Order channel picker -->
+        <div x-show="showChannel" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showChannel=false">
+          <div class="bg-white rounded-xl p-6 w-full max-w-md">
+            <h2 class="font-bold text-[#0A2540] text-lg">Where do you want to eat?</h2>
+            <p class="text-sm text-slate-500 mt-1 mb-4">Choose how this order will be served.</p>
+            <div class="grid gap-3 sm:grid-cols-3">
+              <button @click="chooseChannel('dine_in')" class="rounded-lg border p-4 text-left hover:border-blue-500"><span class="text-2xl">🪑</span><span class="block mt-2 font-semibold">Dine In</span><span class="text-xs text-slate-500">20–30 min</span></button>
+              <button @click="chooseChannel('takeout')" class="rounded-lg border p-4 text-left hover:border-blue-500"><span class="text-2xl">🥡</span><span class="block mt-2 font-semibold">Takeout</span><span class="text-xs text-slate-500">15–20 min</span></button>
+              <button @click="chooseChannel('delivery')" class="rounded-lg border p-4 text-left hover:border-blue-500"><span class="text-2xl">🛵</span><span class="block mt-2 font-semibold">Delivery</span><span class="text-xs text-slate-500">30–45 min</span></button>
+            </div>
+            <button @click="showChannel=false" class="mt-5 w-full rounded-lg border px-4 py-2">Discard</button>
+          </div>
+        </div>
         <!-- Payment modal -->
         <div x-show="showPay" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div class="bg-white rounded-xl p-6 w-full max-w-sm">
-            <h2 class="font-bold text-[#0A2540] mb-4">Payment Method</h2>
+            <h2 class="font-bold text-[#0A2540] mb-4">Review &amp; confirm</h2>
+            <p class="text-sm text-slate-500 mb-3" x-text="order.channel === 'dine_in' ? 'Dine In' : order.channel === 'delivery' ? 'Delivery' : 'Takeout'"></p>
+            <template x-if="order.channel === 'delivery'"><div class="grid gap-2 mb-4"><input x-model="order.riderName" placeholder="Rider name" class="w-full rounded-lg border px-3 py-2" /><input x-model="order.riderPhone" placeholder="Rider phone" class="w-full rounded-lg border px-3 py-2" /></div></template>
+            <template x-if="order.channel === 'dine_in'"><div class="grid gap-2 mb-4"><input x-model="order.table" placeholder="Table number" class="w-full rounded-lg border px-3 py-2" /><input x-model.number="order.guests" type="number" min="1" placeholder="Guests" class="w-full rounded-lg border px-3 py-2" /></div></template>
+            <div class="text-sm flex justify-between mb-4"><span>Total</span><strong x-text="ksh(total())"></strong></div>
             <div class="space-y-2 mb-5">
               <template x-for="m in paymentOptions" :key="m.v">
                 <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:border-[#1E6FD9]"
@@ -264,7 +281,7 @@
               </template>
             </div>
             <div class="flex gap-3">
-              <button @click="showPay=false" class="flex-1 py-2.5 rounded-lg border">Cancel</button>
+              <button @click="showPay=false; showChannel=true" class="flex-1 py-2.5 rounded-lg border">Back</button>
               <button @click="finalizeOrder()" :disabled="processing"
                       class="flex-1 py-2.5 rounded-lg bg-[#1E6FD9] text-white">
                 <span x-text="processing ? 'Processing…' : 'Confirm'"></span>
@@ -306,9 +323,10 @@
                 <h2 class="font-bold text-[#0A2540] mb-3" x-text="'Order #' + selected.id.slice(0,8).toUpperCase()"></h2>
                 <div class="space-y-2 border-t pt-3">
                   <template x-for="(l,i) in selected.lines" :key="i">
-                    <div class="flex justify-between text-sm">
+                    <div class="flex items-center justify-between text-sm">
                       <span x-text="l.qty + '× ' + l.name"></span>
                       <span x-text="ksh(l.price*l.qty)"></span>
+                      <button x-show="['cashier','supervisor','manager','admin'].includes(root.role)" @click="splitLine(selected,l)" class="ml-2 text-xs text-blue-600">Split</button>
                     </div>
                   </template>
                 </div>
@@ -317,11 +335,11 @@
                 </div>
                 <div class="text-xs text-slate-500 mt-2">Payment: <span class="capitalize" x-text="selected.paymentStatus || selected.status || 'pending'"></span> · <span x-text="selected.paymentMethod || 'not selected'"></span></div>
                 <div x-show="selected.feedback" class="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600"><span x-text="'Customer rating: ' + (selected.rating || '—') + ' / 5' "></span><p class="mt-1" x-text="selected.feedback"></p></div>
-                <img x-show="selected.feedbackImageUrl" :src="selected.feedbackImageUrl" alt="Customer review photo" class="mt-3 max-h-48 rounded-lg object-cover" />
                 <div class="flex gap-2 mt-4">
                   <button @click="print(selected)" class="flex-1 py-2 rounded-lg border text-sm">🖨️ Print</button>
                   <button @click="pdf(selected)" class="flex-1 py-2 rounded-lg bg-[#1E6FD9] text-white text-sm">📄 PDF</button>
                 </div>
+                <button x-show="['cashier','supervisor','manager','admin'].includes(root.role)" @click="mergeBills(selected)" class="w-full mt-2 py-2 rounded-lg border text-sm">Merge with another open bill</button>
                 <div x-show="['cashier','supervisor','manager','admin'].includes(root.role) && selected.paymentStatus !== 'paid' && selected.status !== 'paid'" class="grid grid-cols-2 gap-2 mt-2"><button @click="markPaid(selected,'cash')" class="py-2 rounded-lg bg-emerald-600 text-white text-sm">Mark cash paid</button><button @click="markPaid(selected,'card')" class="py-2 rounded-lg bg-blue-600 text-white text-sm">Mark card paid</button><button @click="promptMpesa(selected)" class="py-2 rounded-lg bg-green-700 text-white text-sm">Prompt M-Pesa</button></div>
                 <button x-show="['manager','admin'].includes(root.role)" @click="clearOrder(selected)" class="w-full mt-2 py-2 rounded-lg border text-sm">Archive from active list</button>
               </div>
@@ -334,7 +352,7 @@
       <div x-show="activeView === 'products' && ['manager','admin'].includes(role)" x-data="productManager($data)" x-init="init()">
         <header class="bg-white border-b px-6 py-4 flex justify-between">
           <h1 class="text-xl font-bold text-[#0A2540]">Product Management</h1>
-          <button @click="openAdd()" class="bg-[#1E6FD9] text-white px-4 py-2 rounded-lg text-sm">+ Add Product</button>
+          <div class="flex gap-2"><button @click="importLegacy()" class="rounded-lg border px-3 py-2 text-sm">Import local product table</button><button @click="openAdd()" class="bg-[#1E6FD9] text-white px-4 py-2 rounded-lg text-sm">+ Add Product</button></div>
         </header>
         <div class="p-6">
           <div class="flex gap-4 mb-6">
@@ -351,7 +369,7 @@
             <table class="w-full text-left text-sm">
               <thead class="bg-slate-50 text-slate-600">
                 <tr>
-                  <th class="px-4 py-3">Name</th><th class="px-4 py-3">Category</th>
+                  <th class="px-4 py-3">Image</th><th class="px-4 py-3">Name</th><th class="px-4 py-3">Category</th>
                   <th class="px-4 py-3">Price</th><th class="px-4 py-3">Unit</th>
                   <th class="px-4 py-3">Actions</th>
                 </tr>
@@ -359,6 +377,7 @@
               <tbody class="divide-y">
                 <template x-for="p in filtered()" :key="p.id">
                   <tr>
+                    <td class="px-4 py-3"><img x-show="p.imagePath || p.imageUrl" :src="p.imagePath || p.imageUrl" :alt="p.name" class="h-10 w-10 rounded object-cover" /></td>
                     <td class="px-4 py-3 font-medium" x-text="p.name"></td>
                     <td class="px-4 py-3 text-slate-500" x-text="catName(p.categoryId)"></td>
                     <td class="px-4 py-3 text-[#1E6FD9] font-semibold" x-text="ksh(p.price)"></td>
@@ -389,6 +408,8 @@
                 <input placeholder="Unit" x-model="form.unit"
                        class="w-1/2 px-3 py-2 bg-slate-50 rounded-lg border outline-none" />
               </div>
+              <textarea placeholder="Description" x-model="form.description" class="w-full px-3 py-2 bg-slate-50 rounded-lg border outline-none"></textarea>
+              <label class="block text-sm text-slate-600">Product image (JPG, PNG, WEBP · up to 5 MB)<input type="file" accept="image/jpeg,image/png,image/webp" @change="imageFile=$event.target.files[0] || null" class="mt-1 block w-full text-sm" /></label>
             </div>
             <div class="flex justify-end gap-3 mt-6">
               <button @click="showModal=false" class="px-4 py-2 rounded-lg border">Cancel</button>
@@ -397,6 +418,25 @@
           </div>
         </div>
       </div>
+
+      <!-- ═══ FLOOR / REGISTER / STAFF ═══ -->
+      <section x-show="activeView === 'floor' && ['manager','admin'].includes(role)" x-data="floorApp($data)" x-init="init()" class="min-h-full bg-slate-50">
+        <header class="bg-white border-b px-6 py-4 flex flex-wrap items-center justify-between gap-3"><div><div class="text-sm text-slate-400">POS › Floor</div><h1 class="text-xl font-bold text-[#0A2540]">Floor &amp; Tables</h1></div><div class="flex gap-2"><button @click="showTax=true" class="rounded-lg border px-4 py-2">Tax display</button><button @click="openRegister()" class="rounded-lg bg-[#1E6FD9] px-4 py-2 text-white">Opening Control</button></div></header>
+        <div class="p-6 grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
+          <div class="space-y-4"><div class="flex gap-2"><template x-for="name in ['Main Floor','Patio']" :key="name"><button @click="floor=name" class="rounded-lg px-4 py-2" :class="floor===name?'bg-[#0A2540] text-white':'bg-white border'" x-text="name"></button></template></div><div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4"><template x-for="table in tables.filter(t=>t.floor===floor)" :key="table.id"><button @click="openTable(table)" class="rounded-xl border p-5 text-left shadow-sm" :class="statusClass(table.status)"><span class="text-xs uppercase" x-text="table.status"></span><strong class="mt-3 block text-2xl" x-text="'Table '+table.number"></strong><span class="mt-2 block text-xs">Tap for order &amp; display</span><select @click.stop @change="setStatus(table,$event.target.value)" class="mt-3 rounded border bg-white px-2 py-1 text-xs text-slate-800"><option value="available" :selected="table.status==='available'">Available</option><option value="occupied" :selected="table.status==='occupied'">Occupied</option><option value="reserved" :selected="table.status==='reserved'">Reserved</option><option value="cleaning" :selected="table.status==='cleaning'">Needs cleaning</option></select></button></template></div>
+            <div class="rounded-xl bg-white p-4 border"><h2 class="font-semibold">Add table</h2><div class="mt-3 flex gap-2"><select x-model="newFloor" class="rounded-lg border px-3 py-2"><option>Main Floor</option><option>Patio</option></select><input type="number" min="1" x-model="newNumber" placeholder="Table number" class="rounded-lg border px-3 py-2"/><button @click="addTable()" class="rounded-lg bg-blue-600 px-4 py-2 text-white">Add</button></div></div>
+          </div>
+          <div class="space-y-5"><div class="rounded-xl bg-white p-5 border"><h2 class="font-semibold">Menu categories</h2><div class="mt-3 flex gap-2"><input x-model="newCategory" placeholder="New category" class="flex-1 rounded-lg border px-3 py-2"/><button @click="addCategory()" class="rounded-lg border px-3">Add</button></div><div class="mt-3 divide-y"><template x-for="c in root.categories" :key="c.id"><div class="flex items-center justify-between py-2 text-sm"><span x-text="c.icon+' '+c.name"></span><span><button @click="renameCategory(c)" class="text-blue-600">Rename</button><button @click="removeCategory(c)" class="ml-3 text-red-600">Remove</button></span></div></template></div></div>
+            <div class="rounded-xl bg-white p-5 border"><h2 class="font-semibold">Staff accounts</h2><div class="mt-3 grid gap-2 sm:grid-cols-2"><input x-model="newStaffName" placeholder="Full name" class="rounded-lg border px-3 py-2"/><input x-model="newStaffUser" placeholder="Username" class="rounded-lg border px-3 py-2"/><input x-model="newStaffPassword" type="password" placeholder="Password (8+ chars)" class="rounded-lg border px-3 py-2"/><select x-model="newStaffRole" class="rounded-lg border px-3 py-2"><option value="waiter">Employee</option><option value="cashier">Cashier</option><option value="supervisor">Supervisor</option><option value="manager">Manager</option></select></div><button @click="addStaff()" class="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white">Create staff login</button><div class="mt-4 divide-y"><template x-for="member in staff" :key="member.id"><div class="flex items-center justify-between py-2 text-sm"><span><strong x-text="member.name"></strong> · <span x-text="member.role"></span></span><button @click="removeStaff(member)" class="text-red-600">Remove</button></div></template></div></div>
+          </div>
+        </div>
+        <div x-show="showOpen" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-black/50"><div class="w-full max-w-md rounded-xl bg-white p-6"><h2 class="text-lg font-bold">Opening Control</h2><label class="mt-4 block text-sm">Opening cash (KSh)<input type="number" min="0" x-model.number="openingCash" class="mt-1 w-full rounded-lg border px-3 py-2"/></label><label class="mt-3 block text-sm">Opening note<textarea x-model="openingNote" class="mt-1 w-full rounded-lg border px-3 py-2"></textarea></label><div class="mt-5 flex justify-end gap-2"><button @click="discardRegister()" class="rounded-lg border px-4 py-2">Discard</button><button @click="confirmRegister()" class="rounded-lg bg-blue-600 px-4 py-2 text-white">Open Register</button></div></div></div>
+        <div x-show="showTax" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-black/50"><div class="w-full max-w-md rounded-xl bg-white p-6"><h2 class="text-lg font-bold">How do you want to display prices?</h2><p class="mt-2 text-sm text-slate-500">Example: KSh 10.00 including 16% tax contains KSh 8.62 before tax.</p><label class="mt-4 block text-sm">Tax rate (%)<input type="number" x-model.number="settings.taxRate" class="mt-1 w-full rounded-lg border px-3 py-2"/></label><div class="mt-4 grid grid-cols-2 gap-3"><button @click="acceptTax('included')" class="rounded-lg border p-3" :class="settings.taxMode==='included'?'border-blue-600 bg-blue-50':''">Tax Included</button><button @click="acceptTax('excluded')" class="rounded-lg border p-3" :class="settings.taxMode==='excluded'?'border-blue-600 bg-blue-50':''">Tax Excluded</button></div><button @click="discardTax()" class="mt-4 w-full rounded-lg px-4 py-2 text-slate-600">Discard</button></div></div>
+        <div x-show="showQr" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-black/50" @click.self="showQr=null"><div class="w-full max-w-sm rounded-xl bg-white p-6 text-center"><h2 class="text-lg font-bold" x-text="showQr ? 'Table '+showQr.number+' · Customer Display' : ''"></h2><img x-show="showQr?.qrURL" :src="showQr?.qrURL" alt="Scan to open this table’s customer display" class="mx-auto my-4 h-52 w-52 rounded-lg border p-2"/><p class="my-2 text-sm text-slate-600">Scan the table display QR or open its secure link.</p><a :href="showQr ? displayUrl(showQr) : '/display'" target="_blank" rel="noopener" class="block break-all rounded-lg bg-slate-50 p-3 text-xs text-blue-600" x-text="showQr ? displayUrl(showQr) : ''"></a><div class="mt-4 flex gap-2"><button @click="launchDisplay(showQr)" class="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-white">Open Customer Display</button><button @click="openPos(showQr);showQr=null" class="rounded-lg border px-3 py-2">Start order</button></div><button @click="showQr=null" class="mt-3 w-full text-sm text-slate-500">Discard</button></div></div>
+      </section>
+
+      <!-- ═══ KITCHEN DISPLAY ═══ -->
+      <section x-show="activeView === 'kitchen' && ['waiter','cashier','supervisor','manager','admin'].includes(role)" x-data="kitchenApp()" x-init="init()" class="min-h-full bg-slate-50 p-6"><header class="mb-5 flex items-center justify-between"><div><div class="text-sm text-slate-400">POS › Kitchen</div><h1 class="text-xl font-bold text-[#0A2540]">Kitchen Display</h1></div><span class="text-sm text-slate-500">Live order queue</span></header><div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><template x-for="order in orders" :key="order.id"><article class="rounded-xl border bg-white p-5 shadow-sm"><div class="flex justify-between"><strong x-text="'#'+order.id.slice(0,8)"></strong><span class="rounded-full bg-amber-50 px-2 py-1 text-xs capitalize" x-text="order.status"></span></div><div class="mt-1 text-sm text-slate-500" x-text="(order.channel||'takeout').replace('_',' ')+' · '+(order.table||'')"></div><ul class="mt-4 space-y-2"><template x-for="line in order.lines||[]" :key="line.id"><li class="flex justify-between text-sm"><span x-text="line.name"></span><strong x-text="'× '+(line.qty||line.quantity)"></strong></li></template></ul><p x-show="order.riderName" class="mt-3 text-xs text-slate-500" x-text="'Rider: '+order.riderName+' · '+order.riderPhone"></p><div class="mt-5 flex gap-2"><button x-show="order.status==='new'" @click="setStatus(order,'preparing')" class="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">Preparing</button><button x-show="order.status==='preparing'" @click="setStatus(order,'ready')" class="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white">Ready</button><button x-show="order.status==='ready'" @click="setStatus(order,'served')" class="rounded-lg bg-slate-700 px-3 py-2 text-sm text-white">Served</button></div></article></template><p x-show="!orders.length" class="text-slate-500">No active kitchen tickets.</p></div></section>
 
       <!-- ═══ SETTINGS ═══ -->
       <div x-show="activeView === 'settings' && (role !== 'customer' || user)" x-data="settingsApp($data)" x-init="init()">
@@ -454,6 +494,8 @@
                 <input x-model="settings.hotelName" class="w-full px-3 py-2 border rounded-lg" />
                 <label class="block text-sm">Tax rate (%)</label>
                 <input type="number" x-model.number="settings.taxRate" class="w-full px-3 py-2 border rounded-lg" />
+                <label class="block text-sm">Price display</label>
+                <select x-model="settings.taxMode" class="w-full px-3 py-2 border rounded-lg"><option value="included">Tax Included</option><option value="excluded">Tax Excluded</option></select>
                 <button x-show="root.isManager" @click="saveSettings()" class="bg-[#1E6FD9] text-white px-4 py-2 rounded-lg">Save Changes</button>
               </div>
             </template>

@@ -21,19 +21,41 @@ const asDate = value => value instanceof Date ? value : (value?.toDate?.() || ne
 const asMillis = value => { const parsed = asDate(value).getTime(); return Number.isFinite(parsed) ? parsed : 0; };
 
 let flushingOfflineWrites = false;
+let offlineQueueDb;
+function getOfflineQueueDb() {
+  if (!('indexedDB' in window)) return Promise.resolve(null);
+  if (offlineQueueDb) return offlineQueueDb;
+  offlineQueueDb = new Promise(resolve => {
+    const request = indexedDB.open('hoteli-poa-offline', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('writes', { keyPath: 'id' });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+  return offlineQueueDb;
+}
+async function readOfflineQueue() {
+  const database = await getOfflineQueueDb();
+  if (!database) return JSON.parse(localStorage.getItem('hotelPosPendingWrites') || '[]');
+  return new Promise(resolve => { const request=database.transaction('writes').objectStore('writes').getAll(); request.onsuccess=()=>resolve(request.result||[]); request.onerror=()=>resolve([]); });
+}
+async function saveOfflineQueue(items) {
+  localStorage.setItem('hotelPosPendingWrites', JSON.stringify(items));
+  const database=await getOfflineQueueDb(); if (!database) return;
+  return new Promise(resolve=>{const transaction=database.transaction('writes','readwrite'),store=transaction.objectStore('writes');store.clear();items.forEach(item=>store.put(item));transaction.oncomplete=resolve;transaction.onerror=resolve;});
+}
 async function flushOfflineWrites() {
-  if (flushingOfflineWrites || !navigator.onLine || !auth.currentUser) return;
+  if (flushingOfflineWrites || !navigator.onLine) return;
   flushingOfflineWrites = true;
   try {
-    const queue = JSON.parse(localStorage.getItem('hotelPosPendingWrites') || '[]');
-    const token = await auth.currentUser.getIdToken();
+    const queue = await readOfflineQueue();
+    const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
     const apiBase = String(window.POS_API_BASE_URL || '').replace(/\/$/, '');
     const remaining = [];
     for (const item of queue) {
       try {
         const response = await fetch(`${apiBase}${item.path}`, {
           method: item.method,
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
           body: item.body === undefined ? undefined : JSON.stringify(item.body)
         });
         if (!response.ok) {
@@ -43,12 +65,13 @@ async function flushOfflineWrites() {
         }
       } catch { remaining.push(item); }
     }
-    localStorage.setItem('hotelPosPendingWrites', JSON.stringify(remaining));
+    await saveOfflineQueue(remaining);
     if (queue.length && !remaining.length) toast('Offline changes synced.', 'success');
   } catch (error) { console.warn('Offline changes remain queued:', error.message); }
   finally { flushingOfflineWrites = false; }
 }
 window.addEventListener('online', flushOfflineWrites);
+window.addEventListener('load', () => setTimeout(flushOfflineWrites, 1000));
 
 async function backendRequest(path, method = 'POST', body) {
   const user = auth.currentUser;
@@ -66,20 +89,20 @@ async function backendRequest(path, method = 'POST', body) {
     });
   } catch (error) {
     if (!navigator.onLine || error instanceof TypeError) {
-      const pending = JSON.parse(localStorage.getItem('hotelPosPendingWrites') || '[]');
+      const pending = await readOfflineQueue();
       const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       pending.push({ id, path, method, body: requestBody, createdAt: new Date().toISOString() });
-      localStorage.setItem('hotelPosPendingWrites', JSON.stringify(pending));
+      await saveOfflineQueue(pending);
       return { success: true, id, queued: true, clientQueued: true };
     }
     throw error;
   }
   const result = await response.json().catch(() => ({}));
   if (response.status >= 500 && ['POST', 'PUT', 'PATCH'].includes(method)) {
-    const pending = JSON.parse(localStorage.getItem('hotelPosPendingWrites') || '[]');
+    const pending = await readOfflineQueue();
     const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     pending.push({ id, path, method, body: requestBody, createdAt: new Date().toISOString() });
-    localStorage.setItem('hotelPosPendingWrites', JSON.stringify(pending));
+    await saveOfflineQueue(pending);
     return { success: true, id, queued: true, clientQueued: true };
   }
   if (!response.ok) throw new Error(result.error || `Request failed (${response.status}).`);
@@ -92,7 +115,7 @@ async function backendRequest(path, method = 'POST', body) {
 window.rootApp = function () {
   return {
     user: null, userName: 'Guest', role: 'customer', activeView: 'pos',
-    hotelName: "HOTELI POA", taxRate: 0,
+    hotelName: "HOTELI POA", taxRate: 16, taxMode: 'included',
     categories: [], products: [],
     staffLoginOpen: false, staffLoginPortal: 'admin', staffUsername: '', staffPassword: '', staffLoginError: '', staffLoginBusy: false,
     canInstall: false, installPrompt: null,
@@ -104,6 +127,7 @@ window.rootApp = function () {
       ];
       if (this.role === 'waiter') return [
         {id:'pos', label:'Food & Drinks', icon:'🍽️'},
+        {id:'kitchen', label:'Kitchen Display', icon:'🍳'},
         {id:'messages', label:'Messages', icon:'✉️'}
       ];
       if (['cashier', 'supervisor'].includes(this.role)) return [
@@ -120,7 +144,7 @@ window.rootApp = function () {
         {id:'profile', label:'Profile', icon:'👤'},
         {id:'settings', label:this.isManager ? 'Admin Settings' : 'Settings', icon:'⚙️'}
       ];
-      if (this.isManager) items.push({id:'products', label:'Products', icon:'📦'});
+      if (this.isManager) items.push({id:'products', label:'Products', icon:'📦'}, {id:'floor', label:'Floor & Tables', icon:'🪑'}, {id:'kitchen', label:'Kitchen Display', icon:'🍳'});
       return items;
     },
 
@@ -130,9 +154,9 @@ window.rootApp = function () {
       const applyHash = () => {
         const requested = (location.hash || (this.role === 'customer' ? '#pos' : '#dashboard')).slice(1);
         const staffViews = ['dashboard', 'orders', 'messages', 'profile'];
-        const adminViews = ['products', 'settings'];
+        const adminViews = ['products', 'settings', 'floor', 'kitchen'];
         if (this.isManager) this.activeView = [...staffViews, ...adminViews, 'pos'].includes(requested) ? requested : 'dashboard';
-        else if (this.role === 'waiter') this.activeView = ['pos', 'messages'].includes(requested) ? requested : 'pos';
+        else if (this.role === 'waiter') this.activeView = ['pos', 'messages', 'kitchen'].includes(requested) ? requested : 'pos';
         else if (['cashier', 'supervisor'].includes(this.role)) this.activeView = ['pos', 'orders', 'messages', 'profile'].includes(requested) ? requested : 'orders';
         else this.activeView = requested === 'pos' || (this.user && ['profile', 'orders'].includes(requested)) ? requested : 'pos';
       };
@@ -191,12 +215,13 @@ window.rootApp = function () {
           method: 'POST',
           body: JSON.stringify({ username: this.staffUsername, password: this.staffPassword })
         });
-        const expectedRole = this.staffLoginPortal === 'admin' ? 'admin' : 'waiter';
-        if (result.user?.role !== expectedRole) throw new Error('This account cannot use that login option.');
+        const expectedRole = this.staffLoginPortal === 'admin' ? 'admin' : 'employee';
+        if ((expectedRole === 'admin' && result.user?.role !== 'admin')
+          || (expectedRole === 'employee' && !['waiter','cashier','supervisor','manager'].includes(result.user?.role))) throw new Error('This account cannot use that login option.');
         setSession(result.token, result.user);
         this.staffLoginOpen = false;
         this.staffPassword = '';
-        location.hash = expectedRole === 'admin' ? '#dashboard' : '#pos';
+        location.hash = expectedRole === 'admin' ? '#dashboard' : (['cashier','supervisor'].includes(result.user.role) ? '#orders' : '#pos');
       } catch (error) {
         this.staffLoginError = error.message || 'Sign in failed. Check your username and password.';
       } finally {
@@ -224,6 +249,7 @@ window.rootApp = function () {
         const settings = snap.data();
         this.hotelName = settings.hotelName || this.hotelName;
         this.taxRate = Number(settings.taxRate) || 0;
+        this.taxMode = settings.taxMode === 'excluded' ? 'excluded' : 'included';
       }, error => console.warn('Hotel settings unavailable:', error.message));
     },
 
@@ -249,8 +275,8 @@ window.posApp = function (root) {
   return {
     get root() { return root; },
     currentCategory: null, search: '', cart: [], selectedProduct: null, selectedQty: 1,
-    order: { table: '', guests: 1, customer: '', tip: 0, rating: 0, feedback: '', feedbackImageUrl: '' },
-    showPay: false, payMethod: 'cash', processing: false,
+    order: { table: '', tableId: null, channel: 'takeout', guests: 1, customer: '', customerPhone: '', riderName: '', riderPhone: '', tip: 0, rating: 0, feedback: '' },
+    showPay: false, showChannel: false, payMethod: 'cash', processing: false,
     enabledPaymentMethods: ['cash', 'card', 'mpesa'],
     receiptSettings: { enabled: true, autoPrint: false },
 
@@ -264,6 +290,8 @@ window.posApp = function (root) {
         const saved = JSON.parse(sessionStorage.getItem('samsCustomerCart') || '[]');
         if (saved.length) this.cart = saved;
       } catch {}
+      window.addEventListener('hp-table-selected', event => { this.order.table=event.detail.label;this.order.tableId=event.detail.id;this.order.channel='dine_in';this.syncDisplay(); });
+      try { const table=JSON.parse(sessionStorage.getItem('hpSelectedTable')||'null'); if(table){this.order.table=table.label;this.order.tableId=table.id;this.order.channel='dine_in';sessionStorage.removeItem('hpSelectedTable');} } catch {}
       if (root.user?.displayName) this.order.customer = root.user.displayName;
       if (root.user) getDoc(doc(db, 'userSettings', root.user.uid)).then(snap => {
         const checkout = snap.exists() ? snap.data().checkout : null;
@@ -298,47 +326,39 @@ window.posApp = function (root) {
         productId: p.id, name: p.name, price: p.price, qty
       });
       sessionStorage.setItem('samsCustomerCart', JSON.stringify(this.cart));
+      this.syncDisplay();
     },
-    inc(i) { this.cart[i].qty++; },
-    dec(i) { if (--this.cart[i].qty <= 0) this.cart.splice(i, 1); },
+    inc(i) { this.cart[i].qty++; this.syncDisplay(); },
+    dec(i) { if (--this.cart[i].qty <= 0) this.cart.splice(i, 1); this.syncDisplay(); },
+    syncDisplay() {
+      clearTimeout(this.displayTimer);
+      this.displayTimer = setTimeout(() => fetch('/api/pos/cart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table:this.order.table,tableId:this.order.tableId,channel:this.order.channel,items:this.cart})}).catch(()=>{}),250);
+    },
 
     subtotal() { return this.cart.reduce((s, l) => s + l.price * l.qty, 0); },
-    tax()      { return this.subtotal() * (this.taxRate / 100); },
-    total()    { return this.subtotal() + this.tax() + Math.max(0, Number(this.order.tip) || 0); },
+    tax()      { return root.taxMode === 'included' ? this.subtotal() - this.subtotal() / (1 + this.taxRate / 100) : this.subtotal() * (this.taxRate / 100); },
+    total()    { return this.subtotal() + (root.taxMode === 'excluded' ? this.tax() : 0) + Math.max(0, Number(this.order.tip) || 0); },
     setTipPercent(percent) { this.order.tip = Math.round(this.subtotal() * percent / 100); },
-    async uploadReviewImage(file) {
-      if (!file) return;
-      if (!file.type.startsWith('image/')) return toast('Choose an image file.', 'error');
-      if (file.size > 5 * 1024 * 1024) return toast('Review images must be under 5 MB.', 'error');
-      if (!root.user || root.role !== 'customer') return toast('Sign in as a customer to add a review photo.', 'error');
-      try {
-        const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const imageRef = storageRef(storage, `reviews/${root.user.uid}/${id}`);
-        await uploadBytes(imageRef, file, { contentType: file.type });
-        this.order.feedbackImageUrl = await getDownloadURL(imageRef);
-        toast('Review photo added.', 'success');
-      } catch (error) { toast(error.message, 'error'); }
-    },
-
     openPay() {
       if (!this.cart.length) return;
-      this.showPay = true;
+      this.showChannel = true;
     },
+    chooseChannel(channel) { this.order.channel = channel; this.showChannel = false; this.showPay = true; },
 
     async finalizeOrder() {
       this.processing = true;
       try {
         const orderDoc = {
-          table: this.order.table, guests: this.order.guests,
+          table: this.order.table, tableId: this.order.tableId, channel: this.order.channel, customerPhone: this.order.customerPhone,
+          riderName: this.order.riderName, riderPhone: this.order.riderPhone, guests: this.order.guests,
           customer: this.order.customer,
-          customerId: root.role === 'customer' ? root.user.uid : null,
-          waiterId: root.role === 'customer' ? null : root.user.uid,
+          customerId: root.role === 'customer' ? root.user?.uid || null : null,
+          waiterId: root.role === 'customer' ? null : root.user?.uid || null,
           waiterName: root.role === 'customer' ? root.userName : root.userName,
           status: root.role === 'customer' || this.payMethod === 'mpesa' ? 'pending' : 'paid',
           paymentStatus: root.role === 'customer' || this.payMethod === 'mpesa' ? 'pending' : 'paid', paymentMethod: this.payMethod,
           subtotal: this.subtotal(), tax: this.tax(), tip: Math.max(0, Number(this.order.tip) || 0),
           rating: this.order.rating, feedback: this.order.feedback,
-          feedbackImageUrl: this.order.feedbackImageUrl || '',
           total: this.total(),
           currency: 'KES', createdAt: serverTimestamp()
         };
@@ -360,8 +380,9 @@ window.posApp = function (root) {
           }, 200);
         }
         this.cart = [];
+        this.syncDisplay();
         sessionStorage.removeItem('samsCustomerCart');
-        this.order = { table: '', guests: 1, customer: root.role === 'customer' ? root.userName : '', tip: 0, rating: 0, feedback: '', feedbackImageUrl: '' };
+        this.order = { table: '', tableId: null, channel: 'takeout', guests: 1, customer: root.role === 'customer' ? root.userName : '', customerPhone: '', riderName: '', riderPhone: '', tip: 0, rating: 0, feedback: '' };
       } catch (e) {
         toast(e.message, 'error');
       } finally { this.processing = false; }
@@ -411,14 +432,25 @@ window.ordersApp = function (root) {
     async markPaid(o, method = 'cash') {
       if (!['cashier', 'supervisor', 'manager', 'admin'].includes(root.role)) return toast('Cashier access required to settle bills.', 'error');
       try {
-        await backendRequest(`/api/orders/${encodeURIComponent(o.id)}/payment`, 'PATCH', { paymentMethod: method });
+        const payment = await backendRequest(`/api/orders/${encodeURIComponent(o.id)}/payment`, 'PATCH', { paymentMethod: method });
         Object.assign(o, { status: 'paid', paymentStatus: 'paid', paymentMethod: method });
         if (this.selected?.id === o.id) Object.assign(this.selected, o);
-        toast('Payment recorded as paid.', 'success');
+        toast(payment.loyalty ? `Payment recorded. Loyalty stamps: ${payment.loyalty.stamps}/10.` : 'Payment recorded as paid.', 'success');
       } catch (error) { toast(error.message, 'error'); }
     },
     async promptMpesa(o) {
       toast('M-Pesa payments are disabled in the free SQLite demo.', 'info');
+    },
+    async splitLine(order,line) {
+      const quantity=Number(prompt(`How many of “${line.name}” should move to a new bill?`,String(Math.max(1,Math.floor((line.qty||line.quantity)/2)))));
+      if(!Number.isFinite(quantity)||quantity<=0)return;
+      try{const result=await backendRequest(`/api/orders/${encodeURIComponent(order.id)}/split`,'POST',{lines:[{id:line.id,qty:quantity}]});this.selected={...result.source,lines:result.source.lines};toast(`Created split bill #${result.split.id.slice(0,8)}.`,'success');}
+      catch(error){toast(error.message,'error');}
+    },
+    async mergeBills(order) {
+      const others=prompt('Enter the other open bill IDs, separated by commas:');if(!others)return;
+      try{const orderIds=[order.id,...others.split(',').map(value=>value.trim()).filter(Boolean)];const result=await backendRequest('/api/orders/merge','POST',{orderIds});this.selected={...result.order};toast('Bills merged.','success');}
+      catch(error){toast(error.message,'error');}
     },
     timestamp(o) { return (asMillis(o.createdAt) ? asDate(o.createdAt).toLocaleString() : 'Sync pending'); }
   };
@@ -643,7 +675,7 @@ window.productManager = function (root) {
   return {
     products: [], search: '', filterCat: '',
     showModal: false, editing: null,
-    form: { name: '', categoryId: '', price: 0, unit: '' },
+    form: { name: '', categoryId: '', price: 0, unit: '', description: '' }, imageFile: null,
 
     get categories() { return root.categories; },
     get role() { return root.role; },
@@ -657,9 +689,12 @@ window.productManager = function (root) {
     },
     load() {
       this.unsubscribe?.();
-      this.unsubscribe = onSnapshot(collection(db, 'products'), snap => {
-        this.products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      }, error => toast(error.message, 'error'));
+      const refresh = async () => {
+        try { const response = await fetch('/api/products', { cache: 'no-store' }); if (!response.ok) throw new Error('Could not load products.'); this.products = await response.json(); }
+        catch (error) { toast(error.message, 'error'); }
+      };
+      refresh();
+      this.unsubscribe = setInterval(refresh, 5000);
     },
     catName(id) {
       const c = this.categories.find(c => c.id === id);
@@ -674,26 +709,82 @@ window.productManager = function (root) {
     },
     openAdd() {
       this.editing = null;
-      this.form = { name: '', categoryId: this.categories[0]?.id || '', price: 0, unit: '' };
+      this.form = { name: '', categoryId: this.categories[0]?.id || '', price: 0, unit: '', description: '' };
+      this.imageFile = null;
       this.showModal = true;
     },
     openEdit(p) {
       this.editing = p;
-      this.form = { name: p.name, categoryId: p.categoryId, price: p.price, unit: p.unit };
+      this.form = { name: p.name, categoryId: p.categoryId, price: p.price, unit: p.unit, description: p.description || '' };
+      this.imageFile = null;
       this.showModal = true;
     },
     async save() {
       if (!this.form.name || !this.form.categoryId) return toast('Name & Category required', 'error');
-      if (this.editing) await backendRequest(`/api/products/${encodeURIComponent(this.editing.id)}`, 'PUT', this.form);
-      else await backendRequest('/api/products', 'POST', { ...this.form, isAvailable: true });
+      if (this.imageFile && (this.imageFile.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(this.imageFile.type))) return toast('Choose a JPG, PNG, or WEBP image up to 5 MB.', 'error');
+      const payload = new FormData();
+      for (const [key, value] of Object.entries(this.form)) payload.set(key, String(value ?? ''));
+      if (this.imageFile) payload.set('image', this.imageFile);
+      const token = await auth.currentUser?.getIdToken();
+      const response = await fetch(this.editing ? `/api/products/${encodeURIComponent(this.editing.id)}` : '/api/products', {
+        method: this.editing ? 'PUT' : 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: payload
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) return toast(result.error || 'Product could not be saved.', 'error');
       this.showModal = false;
-      toast('Saved', 'success');
+      this.load();
+      toast('Product saved.', 'success');
+    },
+    async importLegacy() {
+      try { const result=await backendRequest('/api/products/import-legacy','POST',{}); await this.load(); toast(`Imported ${result.imported}; skipped ${result.skipped}.`,'success'); }
+      catch(error) { toast(error.message,'error'); }
     },
     async remove(id) {
       if (!confirm('Delete this product?')) return;
       await backendRequest(`/api/products/${encodeURIComponent(id)}`, 'DELETE');
+      this.products = this.products.filter(product => product.id !== id);
       toast('Deleted', 'success');
     }
+  };
+};
+
+window.floorApp = function (root) {
+  return {
+    tables: [], floor: 'Main Floor', staff: [], registerOpen: null, showOpen: false, showTax: false, showQr: null,
+    openingCash: 0, openingNote: '', newFloor: 'Main Floor', newNumber: '', newCategory: '', newStaffName: '', newStaffUser: '', newStaffPassword: '', newStaffRole: 'waiter',
+    settings: { hotelName: root.hotelName, taxRate: root.taxRate, taxMode: root.taxMode },
+    async init() { await this.refresh(); this.loadStaff(); this.registerOpen=await backendRequest('/api/register/current','GET').catch(()=>null); },
+    async refresh() { this.tables = await fetch('/api/tables').then(r => r.json()).catch(() => []); },
+    async loadStaff() { this.staff = await backendRequest('/api/staff','GET').catch(() => []); },
+    setStatus(table, status) { return backendRequest(`/api/tables/${table.id}/status`,'PUT',{status}).then(() => this.refresh()).catch(e => toast(e.message,'error')); },
+    async openTable(table) { try { const display=await backendRequest(`/api/tables/${table.id}/display`,'GET'); this.showQr={...table,displayURL:new URL(display.url,location.origin).href,qrURL:new URL(display.qrUrl,location.origin).href}; } catch(error) { toast(error.message,'error'); } },
+    async addTable() { const result = await backendRequest('/api/tables','POST',{floor:this.newFloor,number:Number(this.newNumber)}); this.newNumber=''; await this.refresh(); toast(`Table ${result.number} added.`,'success'); },
+    async addCategory() { const name=this.newCategory.trim(); if (!name) return; await backendRequest('/api/categories','POST',{name,icon:'🍽️',sort_order:root.categories.length+1}); this.newCategory=''; root.watchCatalog(); toast('Category added.','success'); },
+    async renameCategory(category) { const name=prompt('Category name',category.name)?.trim(); if(!name||name===category.name)return; await backendRequest(`/api/categories/${category.id}`,'PUT',{name,icon:category.icon,sort_order:category.sort_order}); root.watchCatalog(); },
+    async removeCategory(category) { if(!confirm(`Remove category ${category.name}?`))return; try{await backendRequest(`/api/categories/${category.id}`,'DELETE');root.watchCatalog();}catch(error){toast(error.message,'error');} },
+    async addStaff() { const result=await backendRequest('/api/staff','POST',{name:this.newStaffName,username:this.newStaffUser,password:this.newStaffPassword,role:this.newStaffRole}); this.newStaffName=this.newStaffUser=this.newStaffPassword=''; await this.loadStaff(); toast(`Staff account ${result.username} created.`,'success'); },
+    async editStaff(member) { const name=prompt('Staff name',member.name); if(!name?.trim())return; const role=prompt('Role: waiter, cashier, supervisor, manager',member.role); if(!role)return; try{await backendRequest(`/api/staff/${member.id}`,'PUT',{name:name.trim(),role});await this.loadStaff();}catch(error){toast(error.message,'error');} },
+    async removeStaff(member) { if (!confirm(`Remove ${member.name}?`)) return; await backendRequest(`/api/staff/${member.id}`,'DELETE'); await this.loadStaff(); },
+    async saveTax() { const result=await backendRequest('/api/settings/general','PUT',this.settings); root.taxRate=Number(this.settings.taxRate)||0; root.taxMode=this.settings.taxMode; this.showTax=false; toast('Tax display saved.','success'); return result; },
+    openRegister() { if (this.registerOpen) return toast('A register is already open.','info'); if (!localStorage.getItem('hpTaxModeChosen')) this.showTax=true; else this.showOpen=true; },
+    acceptTax(mode) { this.settings.taxMode=mode; localStorage.setItem('hpTaxModeChosen','yes'); this.saveTax().then(()=>this.showOpen=true); },
+    discardTax() { this.showTax=false; },
+    discardRegister() { this.showOpen=false; },
+    async confirmRegister() { try { this.registerOpen=await backendRequest('/api/register/open','POST',{openingCash:this.openingCash,openingNote:this.openingNote}); this.showOpen=false; toast('Register opened.','success'); } catch(error) { toast(error.message,'error'); } },
+    statusClass(status) { return ({available:'bg-emerald-100 text-emerald-800',occupied:'bg-red-100 text-red-800',reserved:'bg-purple-100 text-purple-800',cleaning:'bg-amber-100 text-amber-900'})[status] || 'bg-slate-100 text-slate-600'; },
+    displayUrl(table) { return table?.displayURL || ''; },
+    launchDisplay(table) { if (table?.displayURL) window.open(table.displayURL, '_blank', 'noopener'); },
+    openPos(table) { const selected={id:table.id,label:`${table.floor} ${table.number}`};sessionStorage.setItem('hpSelectedTable',JSON.stringify(selected));root.goto('pos');window.dispatchEvent(new CustomEvent('hp-table-selected',{detail:selected})); }
+  };
+};
+
+window.kitchenApp = function () {
+  return {
+    orders: [], timer: null,
+    async init() { await this.refresh(); this.timer=setInterval(()=>this.refresh(),3000); },
+    async refresh() { this.orders=await backendRequest('/api/orders','GET').then(rows=>rows.filter(order=>['new','preparing','ready'].includes(order.status))).catch(()=>this.orders); },
+    async setStatus(order,status) { await backendRequest(`/api/orders/${encodeURIComponent(order.id)}/status`,'PUT',{status}); await this.refresh(); toast(`Order marked ${status}.`,'success'); },
+    destroy() { clearInterval(this.timer); }
   };
 };
 
@@ -715,7 +806,7 @@ window.settingsApp = function (root) {
     appearance: { theme: 'light', fontSize: 16, lineHeight: 22 },
     checkout: { paymentHistory: true, miniStatement: true, receipt: { enabled: true, autoPrint: false }, methods: { cash: true, card: true, mpesa: true } },
     region: { location: 'Kenya', language: 'English', predictiveText: true },
-    settings: { hotelName: "HOTELI POA", currency: 'KES', taxRate: 0 },
+    settings: { hotelName: "HOTELI POA", currency: 'KES', taxRate: 16, taxMode: 'included' },
     profile: { firstName: '', lastName: '', phone: '', dob: '', location: '' },
     miniStatement: [], sessions: [],
     avatarUploading: false,
