@@ -31,6 +31,26 @@ router.get('/api/admin/staff',requireStaff,requireRole(managers),(_req,res)=>{
     last_seen AS lastSeen,last_page AS currentPage,created_at AS createdAt FROM staff ORDER BY role,name COLLATE NOCASE`).all());
 });
 
+router.get('/api/admin/debug/staff',requireStaff,requireRole(admins),(_req,res)=>{
+  return res.json(db.prepare(`SELECT id,name,phone,role,active,
+    CASE WHEN pin_hash='' THEN '' ELSE substr(pin_hash,1,6) END AS hashPrefix,
+    CASE WHEN pin_hash LIKE 'scrypt$%' THEN 'scrypt' WHEN pin_hash='' THEN 'missing' ELSE 'legacy' END AS hashScheme
+    FROM staff ORDER BY id`).all());
+});
+
+router.delete('/api/admin/staff/:id/delete',requireStaff,requireRole('super_admin'),(req,res)=>{
+  const member=db.prepare('SELECT id,name,role,active FROM staff WHERE id=?').get(Number(req.params.id));
+  if(!member)return res.status(404).json({error:'Staff member not found.'});
+  if(member.id===req.staff.id)return res.status(409).json({error:'You cannot delete your current account.'});
+  if(member.role==='super_admin')return res.status(409).json({error:'Super admin accounts cannot be deleted here.'});
+  withTransaction(()=>{
+    db.prepare('UPDATE staff SET active=0 WHERE id=?').run(member.id);
+    db.prepare('DELETE FROM staff_sessions WHERE staff_id=?').run(member.id);
+    if(member.active)logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'staff.deactivate',targetType:'staff',targetId:member.id,meta:{via:'delete_button'}});
+  });
+  return res.status(204).end();
+});
+
 router.post('/api/admin/staff',requireStaff,requireRole(managers),async(req,res,next)=>{
   try {
     const name=clean(req.body?.name,120).replace(/\s+/g,' ');
@@ -54,7 +74,10 @@ router.post('/api/admin/staff',requireStaff,requireRole(managers),async(req,res,
       throw error;
     }
     return res.status(201).json(db.prepare(`SELECT id,name,phone,role,active,force_password_change AS forcePasswordChange FROM staff WHERE id=?`).get(id));
-  } catch(error){return next(error);}
+  } catch(error){
+    console.error('[staff-create] database error',error?.stack||error?.message||error);
+    return res.status(500).json({error:'staff_create_failed',detail:String(error?.message||error)});
+  }
 });
 
 router.patch('/api/admin/staff/:id',requireStaff,requireRole(managers),async(req,res,next)=>{
@@ -84,7 +107,7 @@ router.patch('/api/admin/staff/:id',requireStaff,requireRole(managers),async(req
   } catch(error){if(String(error.code).startsWith('SQLITE_CONSTRAINT')||/UNIQUE constraint failed: staff\.phone/i.test(String(error.message)))return res.status(409).json({error:'A staff member already uses that phone number.'});return next(error);}
 });
 
-router.delete('/api/admin/staff/:id',requireStaff,requireRole(managers), (req,res)=>{
+router.delete('/api/admin/staff/:id',requireStaff,requireRole(admins), (req,res)=>{
   const member=db.prepare('SELECT * FROM staff WHERE id=?').get(Number(req.params.id));
   if(!member)return res.status(404).json({error:'Staff member not found.'});
   if(member.role==='super_admin')return res.status(409).json({error:'Super admin accounts cannot be deactivated here.'});

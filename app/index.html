@@ -51,7 +51,7 @@
     <!-- MAIN -->
       <main class="flex-1" :class="role === 'customer' ? 'ml-0' : 'ml-64'">
       <header x-show="role === 'customer'" class="customer-header sticky top-0 z-20 bg-white border-b px-3 py-2 sm:px-5 sm:py-3">
-        <details class="relative"><summary aria-label="Open menu" class="list-none cursor-pointer rounded-lg border px-3 py-2 text-xl leading-none">☰</summary><nav class="customer-menu absolute left-0 top-full z-30 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><a x-show="!user" href="#" @click.prevent="openCustomerAuth('login')">Sign in</a><a x-show="!user" href="#" @click.prevent="openCustomerAuth('register')">Create account</a><a x-show="user" href="/app/profile.html">Profile</a><a x-show="user" href="#orders">My Orders</a><a href="#about">About</a><a href="#contact">Contact</a><button x-show="user" @click="logout()" class="customer-muted-link">Sign out</button><hr><a class="customer-muted-link" href="/portal">Staff Portal</a></nav></details>
+        <details class="relative"><summary aria-label="Open menu" class="list-none cursor-pointer rounded-lg border px-3 py-2 text-xl leading-none">☰</summary><nav class="customer-menu absolute left-0 top-full z-30 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><a x-show="!user" href="#" @click.prevent="openCustomerAuth('login')">Sign in</a><a x-show="!user" href="#" @click.prevent="openCustomerAuth('register')">Create account</a><a x-show="user" href="#orders">My Orders</a><a x-show="user" href="/app/profile.html">Profile</a><a x-show="user" href="/app/profile.html#favorites">Favorites</a><a href="/app/about.html">About</a><a href="/app/contact.html">Contact</a><button x-show="user" @click="logout()" class="customer-muted-link">Sign out</button><hr><a class="customer-muted-link" href="/portal">Staff Portal</a></nav></details>
         <a href="/" class="customer-brand font-bold text-[#0A2540]">HOTELI POA</a>
         <button x-show="user" @click="goto('pos')" aria-label="Open cart" class="rounded-lg border px-3 py-2 text-sm">🛒 <span x-text="cartCount"></span></button><button x-show="!user" @click="openCustomerAuth('login')" class="rounded-lg border border-blue-600 px-3 py-2 text-xs font-semibold text-blue-700">Sign In</button>
       </header>
@@ -680,6 +680,7 @@
 
   <!-- Offline banner -->
   <div x-show="!online" class="offline-banner">Offline — the saved menu is available. Orders will sync when internet returns.</div>
+  <footer x-show="role==='customer'" class="public-footer">© 2026 HOTELI POA. All rights reserved.</footer>
 </div>
 
 <script src="/runtime-config.js"></script>

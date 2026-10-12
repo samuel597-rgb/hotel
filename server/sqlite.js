@@ -76,6 +76,9 @@ db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS customers_username_unique ON customer
 ensureColumn('order_items','name_snapshot',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('order_items','price_cents_snapshot','INTEGER NOT NULL DEFAULT 0');
 ensureColumn('customer_messages','sender_name',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('customer_messages','sender_type',"TEXT NOT NULL DEFAULT 'staff'");
+ensureColumn('customer_messages','sender_id',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('customer_messages','body',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('customer_messages','read_by_customer','INTEGER NOT NULL DEFAULT 0');
 ensureColumn('customer_messages','read_by_staff','INTEGER NOT NULL DEFAULT 0');
 ensureColumn('staff_messages','recipient_role',"TEXT NOT NULL DEFAULT ''");

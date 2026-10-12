@@ -174,23 +174,41 @@ router.post(['/customer/logout', '/api/customer/logout'], requireCustomer, (req,
 
 router.post(['/staff/login','/api/staff/login'], authRateLimit, async (req, res, next) => {
   let auditStaff = null;
+  const trace='[staff-login]';
   try {
-    const identifier = safeText(req.body?.phone || req.body?.username || req.body?.name).toLowerCase();
+    const identifier = safeText(req.body?.identifier || req.body?.phone || req.body?.username || req.body?.name).toLowerCase();
     const phone = normalizePhone(identifier);
-    let staff = db.prepare(`SELECT * FROM staff WHERE active=1 AND
-      (phone=? OR name=? COLLATE NOCASE OR auth_user_id IN (SELECT id FROM auth_users WHERE email=? COLLATE NOCASE)) LIMIT 1`)
-      .get(phone, identifier, identifier.includes('@') ? identifier : `${identifier}@staff.hoteli.local`);
+    console.info(trace,'attempt',{identifier});
+    // The phone condition must only apply when a phone was actually supplied:
+    // normalizePhone() of a plain name is '' and would otherwise match the
+    // built-in demo rows (which store an empty phone) instead of the named row.
+    const emailGuess = identifier.includes('@') ? identifier : `${identifier}@staff.hoteli.local`;
+    let staff = phone
+      ? db.prepare(`SELECT * FROM staff WHERE
+          (phone=? OR name=? COLLATE NOCASE OR auth_user_id IN (SELECT id FROM auth_users WHERE email=? COLLATE NOCASE)) LIMIT 1`)
+          .get(phone, identifier, emailGuess)
+      : db.prepare(`SELECT * FROM staff WHERE
+          (name=? COLLATE NOCASE OR auth_user_id IN (SELECT id FROM auth_users WHERE email=? COLLATE NOCASE)) LIMIT 1`)
+          .get(identifier, emailGuess);
     // Preserve the demo username/password accounts already used by the employee UI.
-    if (!staff && identifier === 'admin 1') staff = db.prepare('SELECT * FROM staff WHERE auth_user_id=? AND active=1').get('demo-admin');
-    if (!staff && identifier === 'employee 1') staff = db.prepare('SELECT * FROM staff WHERE auth_user_id=? AND active=1').get('demo-waiter');
-    let valid = staff && await verifyPassword(req.body?.password ?? req.body?.pin, staff.pin_hash);
+    if (!staff && identifier === 'admin 1') staff = db.prepare('SELECT * FROM staff WHERE auth_user_id=?').get('demo-admin');
+    if (!staff && identifier === 'employee 1') staff = db.prepare('SELECT * FROM staff WHERE auth_user_id=?').get('demo-waiter');
+    console.info(trace,'staff row lookup',{found:Boolean(staff),staffId:staff?.id||null,active:staff?Boolean(staff.active):null});
+    let valid = Boolean(staff && await verifyPassword(req.body?.password ?? req.body?.pin, staff.pin_hash));
     if (!valid && staff?.auth_user_id) {
       const user = db.prepare('SELECT password_hash FROM auth_users WHERE id=?').get(staff.auth_user_id);
       if (user) valid = await verifyPassword(req.body?.password ?? req.body?.pin, user.password_hash);
     }
     auditStaff = staff;
+    console.info(trace,'hash comparison',{matched:Boolean(valid)});
+    if(staff&&!staff.active){
+      withTransaction(()=>logAction(db,{actorId:String(staff.id),actorRole:staff.role,action:'auth.login_failed',targetType:'staff',targetId:staff.id,meta:{reason:'inactive'}}));
+      console.warn(trace,'result',{success:false,reason:'inactive',staffId:staff.id});
+      return res.status(403).json({error:'This account has been deactivated.'});
+    }
     if (!staff || !valid) {
       withTransaction(()=>logAction(db,{actorId:staff?String(staff.id):null,actorRole:staff?.role||'anonymous',action:'auth.login_failed',targetType:'staff',targetId:staff?.id||identifier}));
+      console.warn(trace,'result',{success:false,reason:staff?'bad_password':'staff_not_found'});
       return res.status(401).json({ error: 'Username, phone, or password is incorrect.' });
     }
     const token = crypto.randomBytes(24).toString('hex');
@@ -200,6 +218,7 @@ router.post(['/staff/login','/api/staff/login'], authRateLimit, async (req, res,
     });
     const displayRoles={super_admin:'Administrator',admin:'Administrator',manager:'Manager',front_desk:'Front Desk',kitchen:'Kitchen',employee:'Waiter/Employee',waiter:'Waiter/Employee',cashier:'Cashier',supervisor:'Supervisor'};
     const display_role=displayRoles[staff.role]||'Staff',landing=({super_admin:'/admin/dashboard.html',admin:'/admin/dashboard.html',manager:'/admin/dashboard.html',front_desk:'/staff/dashboard.html',kitchen:'/staff/kds.html',employee:'/staff/dashboard.html',waiter:'/staff/dashboard.html',cashier:'/staff/dashboard.html',supervisor:'/staff/dashboard.html'})[staff.role]||'/staff/dashboard.html';
+    console.info(trace,'result',{success:true,staffId:staff.id,role:staff.role});
     return res.json({ token, role: staff.role, display_role, landing, forcePasswordChange: Boolean(staff.force_password_change), user: { id: staff.id, name: staff.name, phone: staff.phone, role: staff.role, display_role } });
   } catch (error) { console.error('[staff-login] failed', { code:error?.code||'UNKNOWN', message:error?.message||String(error), staffId:auditStaff?.id||null }); return next(error); }
 });

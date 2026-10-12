@@ -354,8 +354,8 @@ window.rootApp = function () {
       localStorage.removeItem('hp_customer_token');sessionStorage.removeItem('hp_customer_token');
       localStorage.removeItem(staffKey);sessionStorage.removeItem(staffKey);
       await signOut(auth);
+      this.user=null;this.userName='Guest';this.role='customer';this.favoriteIds=[];this.activeView='pos';
       location.hash = '#pos';
-      location.reload();
     },
 
     // Expose helpers to child components
@@ -472,6 +472,7 @@ window.posApp = function (root) {
         const result=root.role==='customer'?await customerRequest('/api/customer/orders','POST',payload):await backendRequest('/api/orders','POST',payload);
         const orderDoc=result.order||{};
         const orderId=orderDoc.id||result.id;
+        if(root.role==='customer'&&orderDoc.id)window.dispatchEvent(new CustomEvent('customer-order-created',{detail:orderDoc}));
         if (result.queued) toast('Order saved on this server and queued for sync.', 'info');
         toast(`Order ${String(orderId).slice(0,6)} saved · ${window.ksh(orderDoc.total)}`, 'success');
         this.showPay = false;
@@ -501,6 +502,12 @@ window.ordersApp = function (root) {
 
     unsubscribe: null,
     init() {
+      window.addEventListener('customer-order-created',event=>{
+        if(root.role!=='customer'||!event.detail?.id)return;
+        const created={...event.detail,lines:event.detail.items||[],createdAt:event.detail.createdAt||new Date().toISOString()};
+        this.orders=[created,...this.orders.filter(order=>order.id!==created.id)];this.selected=created;root.activeView='orders';
+        this.refreshCustomerOrders();
+      });
       if (!root.user) return;
       if (root.role === 'admin') { this.refreshOverview(); this.overviewTimer=setInterval(()=>this.refreshOverview(),10000); return; }
       if(root.role==='customer'&&(localStorage.getItem('hp_customer_token')||sessionStorage.getItem('hp_customer_token'))){

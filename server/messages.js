@@ -115,20 +115,21 @@ router.get('/api/messages/customer', (req,res,next) => {
 });
 
 router.post('/api/messages/customer', (req,res,next) => {
-  const actor=actorFromRequest(req);if(!actor)return res.status(401).json({error:'Sign in is required.'});
-  if(actor.type==='customer'){
-    const body=clean(req.body?.body);if(!body)return res.status(400).json({error:'Message cannot be empty.'});
-    const id=crypto.randomUUID(),customer=actor.customer;
-    withTransaction(()=>{db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)').run(id,customer.id,'customer',customer.id,customer.name,body);logAction(db,{actorId:customer.id,actorRole:'customer',action:'message.send',targetType:'customer_message',targetId:id});});
-    const message={id,senderType:'customer',senderId:customer.id,senderName:customer.name,body,createdAt:new Date().toISOString()};publish(`customer:${customer.id}`,'message',{scope:`customer:${customer.id}`,message});publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
-    return res.status(201).json(message);
-  }
-  const staff=actor.staff;
+  try {
+    const actor=actorFromRequest(req);if(!actor)return res.status(401).json({error:'Sign in is required.'});
+    if(actor.type==='customer'){
+      const body=clean(req.body?.body);if(!body)return res.status(400).json({error:'Message cannot be empty.'});
+      const id=crypto.randomUUID(),customer=actor.customer;
+      withTransaction(()=>{db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)').run(id,customer.id,'customer',customer.id,customer.name,body);logAction(db,{actorId:customer.id,actorRole:'customer',action:'message.send',targetType:'customer_message',targetId:id});});
+      const message={id,senderType:'customer',senderId:customer.id,senderName:customer.name,body,createdAt:new Date().toISOString()};publish(`customer:${customer.id}`,'message',{scope:`customer:${customer.id}`,message});publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
+      return res.status(201).json(message);
+    }
+    const staff=actor.staff;
     if(!['super_admin','admin','manager','front_desk'].includes(staff.role))return res.status(403).json({error:'Front desk messaging access is required.'});
     const customerId=String(req.body?.customer_id||'');
     const body=clean(req.body?.body);
     if(!body)return res.status(400).json({error:'Message cannot be empty.'});
-    if(!db.prepare('SELECT id FROM customers WHERE id=? AND active=1').get(customerId))return res.status(404).json({error:'Customer not found.'});
+    if(!db.prepare('SELECT id FROM customers WHERE id=? AND active=1').get(customerId))return res.status(404).json({error:'This customer no longer exists. The database may have been reset.'});
     const id=crypto.randomUUID();
     withTransaction(()=>{db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)')
       .run(id,customerId,staff.role==='admin'||staff.role==='super_admin'?'admin':'staff',String(staff.id),staff.name,body);logAction(db,{actorId:String(staff.id),actorRole:staff.role,action:'message.send',targetType:'customer_message',targetId:id});});
@@ -136,6 +137,12 @@ router.post('/api/messages/customer', (req,res,next) => {
     publish(`customer:${customerId}`,'message',{scope:`customer:${customerId}`,message});
     publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
     return res.status(201).json(message);
+  } catch(error) {
+    console.error('[customer-message] send failed',error?.stack||error?.message||error);
+    if(String(error?.code||'').includes('FOREIGNKEY')||/foreign key constraint failed/i.test(String(error?.message||'')))
+      return res.status(404).json({error:'This customer no longer exists. The database may have been reset.'});
+    return res.status(500).json({error:'message_send_failed',detail:String(error?.message||error)});
+  }
 });
 
 router.post('/api/messages/customer/read', (req,res,next) => {
