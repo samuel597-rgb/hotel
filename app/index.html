@@ -15,10 +15,10 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body class="bg-slate-50 min-h-screen">
+<body class="bg-slate-50">
 
 <div x-data="rootApp()" x-init="init()" x-cloak>
-  <div class="flex min-h-screen">
+  <div class="flex">
 
     <!-- SIDEBAR -->
     <aside x-show="role !== 'customer'" class="w-64 bg-[#0A2540] text-white flex flex-col fixed h-full">
@@ -49,12 +49,11 @@
     <!-- MAIN -->
       <main class="flex-1" :class="role === 'customer' ? 'ml-0' : 'ml-64'">
       <header x-show="role === 'customer'" class="sticky top-0 z-20 bg-white border-b px-5 py-3 flex justify-between items-center">
-        <a href="/" class="font-bold text-[#0A2540]">HOTELI POA <span class="text-blue-600">Food &amp; Drinks</span></a>
-        <div class="flex items-center gap-2 sm:gap-3"><button @click="goto('pos')" aria-label="Cart" class="rounded-lg border px-3 py-2 text-sm">🛒 <span x-text="cartCount"></span></button><a x-show="user" href="#orders" class="text-sm text-slate-600">My orders</a><a x-show="user" href="#profile" class="text-sm text-slate-600">Profile</a><a x-show="user && isManager" href="#settings" class="text-sm text-slate-600">Settings</a><button @click="toggleTheme()" class="rounded-lg border px-3 py-2 text-sm" :aria-label="theme==='dark'?'Switch to light theme':'Switch to dark theme'" x-text="theme==='dark'?'☀️':'🌙'"></button><button x-show="canInstall" @click="installApp()" class="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 sm:px-4 sm:text-sm">Install App</button><button x-show="!user" @click="openCustomerAuth('login')" class="rounded-lg border border-blue-600 px-3 py-2 text-xs font-semibold text-blue-700 sm:px-4 sm:text-sm">Customer sign in</button><a href="/admin" class="rounded-lg bg-[#0A2540] px-3 py-2 text-xs font-semibold text-white sm:px-4 sm:text-sm">Admin Login</a><a href="/staff" class="rounded-lg border border-blue-600 px-3 py-2 text-xs font-semibold text-blue-700 sm:px-4 sm:text-sm">Employee Login</a><button x-show="user" @click="logout()" class="text-sm text-blue-600">Sign out</button></div>
-      </header>
+        <a href="/" class="font-bold text-[#0A2540]">HOTELI POA <span class="hidden text-blue-600 sm:inline">Food &amp; Drinks</span></a>
+        <div class="flex min-w-0 items-center gap-1 sm:gap-3"><details class="relative"><summary aria-label="More sign-in options" class="list-none cursor-pointer rounded-lg border px-3 py-2 text-lg leading-none" title="Staff sign in">☰</summary><nav class="absolute right-0 top-full z-30 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><a href="/staff" class="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">Employee Sign In</a><a href="/admin" class="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">Admin Sign In</a></nav></details><button @click="goto('pos')" aria-label="Cart" class="rounded-lg border px-3 py-2 text-sm">🛒 <span x-text="cartCount"></span></button><a x-show="user" href="#orders" class="hidden text-sm text-slate-600 sm:inline">My orders</a><a x-show="user" href="#profile" class="hidden text-sm text-slate-600 sm:inline">Profile</a><button @click="toggleTheme()" class="hidden rounded-lg border px-3 py-2 text-sm sm:inline-flex" :aria-label="theme==='dark'?'Switch to light theme':'Switch to dark theme'" x-text="theme==='dark'?'☀️':'🌙'"></button><button x-show="canInstall" @click="installApp()" class="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 sm:px-4 sm:text-sm">Install App</button><button x-show="!user" @click="openCustomerAuth('login')" class="rounded-lg border border-blue-600 px-3 py-2 text-xs font-semibold text-blue-700 sm:px-4 sm:text-sm">Sign In</button><button x-show="user" @click="logout()" class="text-sm text-blue-600">Sign out</button></div></header>
 
       <div x-show="customerAuthOpen" x-cloak class="fixed inset-0 z-[60] grid place-items-center bg-slate-950/60 p-4" @click.self="customerAuthOpen=false">
-        <section class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+        <section class="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
           <div class="flex items-start justify-between"><div><p class="text-xs font-bold uppercase tracking-widest text-blue-600">HOTELI POA</p><h2 class="mt-2 text-2xl font-bold text-[#0A2540]" x-text="customerAuthMode==='register'?'Create customer account':customerAuthMode==='forgot'?'Reset password':'Customer sign in'"></h2></div><button @click="customerAuthOpen=false" class="text-2xl text-slate-400" aria-label="Close">×</button></div>
           <form class="mt-5 space-y-3" @submit.prevent="submitCustomerAuth()">
             <input x-show="customerAuthMode==='register'" x-model="customerName" required minlength="2" placeholder="Full name" class="w-full rounded-lg border px-3 py-3" />
@@ -64,30 +63,16 @@
             <input x-show="customerAuthMode==='register'" x-model="customerLandmark" placeholder="Landmark (optional)" class="w-full rounded-lg border px-3 py-3" />
             <input x-show="customerAuthMode!=='forgot'" x-model="customerPassword" required type="password" minlength="8" placeholder="Password (8+ characters)" autocomplete="current-password" class="w-full rounded-lg border px-3 py-3" />
             <p x-show="customerAuthError" x-text="customerAuthError" role="status" class="text-sm text-blue-700"></p>
-            <button :disabled="customerAuthBusy" class="w-full rounded-lg bg-blue-600 py-3 font-semibold text-white" x-text="customerAuthBusy?'Please wait…':customerAuthMode==='register'?'Create account':customerAuthMode==='forgot'?'Show demo reset message':'Sign in'"></button>
+            <button :disabled="customerAuthBusy" class="w-full rounded-lg bg-blue-600 py-3 font-semibold text-white" x-text="customerAuthBusy?'Please wait…':customerAuthMode==='register'?'Create account':customerAuthMode==='forgot'?'Check reset options':'Sign in'"></button>
           </form>
           <div class="mt-4 flex flex-wrap justify-between gap-2 text-sm text-blue-700"><button x-show="customerAuthMode!=='register'" @click="customerAuthMode='register';customerAuthError=''">Create account</button><button x-show="customerAuthMode==='login'" @click="customerAuthMode='forgot';customerAuthError=''">Forgot password?</button><button x-show="customerAuthMode!=='login'" @click="customerAuthMode='login';customerAuthError=''">Back to sign in</button></div>
         </section>
       </div>
 
-      <div x-show="staffLoginOpen" x-cloak @keydown.escape.window="staffLoginOpen=false" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="staffLoginTitle">
-        <section class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl sm:p-8" @click.outside="staffLoginOpen=false">
-          <div class="flex items-start justify-between gap-4">
-            <div><p class="text-xs font-bold uppercase tracking-widest text-blue-600">HOTELI POA</p><h2 id="staffLoginTitle" class="mt-2 text-2xl font-bold text-[#0A2540]" x-text="staffLoginPortal === 'admin' ? 'Admin Login' : 'Employee Login'"></h2><p class="mt-1 text-sm text-slate-500">Sign in to the staff workspace.</p></div>
-            <button type="button" @click="staffLoginOpen=false" class="rounded-lg px-3 py-1 text-xl text-slate-400 hover:bg-slate-100" aria-label="Close login">×</button>
-          </div>
-          <form class="mt-6 space-y-4" @submit.prevent="submitStaffLogin()">
-            <label class="block text-sm font-medium text-slate-700">Username<input x-model="staffUsername" required autocomplete="username" :placeholder="staffLoginPortal === 'admin' ? 'admin 1' : 'employee 1'" class="mt-1 w-full rounded-lg border border-slate-200 p-3" /></label>
-            <label class="block text-sm font-medium text-slate-700">Password<input x-model="staffPassword" required type="password" autocomplete="current-password" class="mt-1 w-full rounded-lg border border-slate-200 p-3" /></label>
-            <p x-show="staffLoginError" x-text="staffLoginError" role="alert" class="text-sm text-red-600"></p>
-            <button type="submit" :disabled="staffLoginBusy" class="w-full rounded-lg bg-blue-600 py-3 font-semibold text-white disabled:opacity-60" x-text="staffLoginBusy ? 'Signing in…' : 'Sign in'"></button>
-          </form>
-        </section>
-      </div>
 
       <section x-show="role==='customer'&&user&&(localStorage.getItem('hp_customer_token')||sessionStorage.getItem('hp_customer_token'))" x-cloak x-data="customerChatApp($data)" x-init="init()" class="fixed bottom-4 right-4 z-40">
         <div x-show="open" class="mb-3 flex h-[min(70vh,480px)] w-[min(92vw,360px)] flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
-          <header class="flex items-center justify-between bg-[#0A2540] p-4 text-white"><div><strong>Front desk</strong><p class="text-xs text-blue-100">In-app demo chat</p></div><button @click="open=false" aria-label="Close chat">×</button></header>
+          <header class="flex items-center justify-between bg-[#0A2540] p-4 text-white"><div><strong>Front desk</strong><p class="text-xs text-blue-100">Message the front desk</p></div><button @click="open=false" aria-label="Close chat">×</button></header>
           <div class="flex-1 space-y-2 overflow-auto p-3"><template x-for="message in messages" :key="message.id"><div class="max-w-[85%] rounded-xl p-2 text-sm" :class="message.senderType==='customer'?'ml-auto bg-blue-100 text-slate-900':'bg-slate-100 text-slate-900'"><div x-text="message.body"></div><time class="mt-1 block text-[10px] text-slate-500" x-text="new Date(message.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})"></time></div></template><p x-show="!messages.length" class="py-6 text-center text-sm text-slate-500">Send a message to the front desk.</p></div>
           <div class="border-t p-3"><div x-show="showEmoji" class="mb-2 grid grid-cols-8 gap-1"><template x-for="emoji in emojis" :key="emoji"><button @click="draft+=emoji" x-text="emoji" class="rounded p-1 hover:bg-slate-100"></button></template></div><form @submit.prevent="send()" class="flex gap-2"><button type="button" @click="showEmoji=!showEmoji" class="rounded-lg border px-2" aria-label="Choose emoji">☺</button><input x-model="draft" @input="typing()" maxlength="2000" placeholder="Message front desk" class="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm"/><button class="rounded-lg bg-blue-600 px-3 py-2 text-white">Send</button></form></div>
         </div>
@@ -178,29 +163,30 @@
       </section>
 
       <!-- ═══ POS ═══ -->
-      <div x-show="activeView === 'pos'" x-data="posApp($data)" x-init="init()" class="flex h-screen">
+      <div x-show="activeView === 'pos'" x-data="posApp($data)" x-init="init()" class="flex flex-col lg:flex-row" :class="root.role === 'customer' ? '' : 'lg:h-screen'">
         <div class="flex-1 flex flex-col">
-          <header class="bg-white border-b px-6 py-4 flex justify-between items-center">
+          <header class="bg-white border-b px-4 py-3 sm:px-6 sm:py-4 flex flex-wrap justify-between items-center gap-3">
             <div class="text-sm text-slate-500 flex items-center gap-2">
               <span>Food &amp; Drinks</span><span>›</span>
               <span class="text-[#0A2540] font-medium" x-text="currentCategory?.name || 'Categories'"></span>
             </div>
             <input type="search" placeholder="Search…" x-model="search"
-                   class="px-4 py-2 rounded-lg bg-slate-100 text-sm outline-none" />
+                   class="w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-100 text-sm outline-none" />
           </header>
 
           <section x-show="root.role==='customer'&&!currentCategory" class="hp-hero relative mx-4 mt-4 overflow-hidden rounded-2xl sm:mx-6">
-            <div class="hp-slide hp-slide-one"></div><div class="hp-slide hp-slide-two"></div><div class="hp-slide hp-slide-three"></div><div class="hp-slide hp-slide-four"></div>
+            <div class="hp-slide hp-slide-one"><img src="/food/1.jpg" alt="Grilled meal with vegetables" /></div><div class="hp-slide hp-slide-two"><img src="/food/2.jpg" alt="Bowl of rice" /></div><div class="hp-slide hp-slide-three"><img src="/food/3.jpg" alt="Fresh orange juice" /></div><div class="hp-slide hp-slide-four"><img src="/food/4.jpg" alt="Chicken wings with a drink" /></div>
             <div class="hp-hero__overlay"></div>
-            <div class="relative z-10 flex min-h-[320px] flex-col items-center justify-center px-5 py-12 text-center text-white sm:min-h-[400px]">
+            <div class="relative z-10 flex min-h-[250px] flex-col items-center justify-center px-4 py-8 text-center text-white sm:min-h-[400px] sm:px-5 sm:py-12">
               <p class="text-sm font-bold uppercase tracking-[.35em]">Fresh food, made for you</p>
-              <h1 class="hp-hero__title">HOTELI POA</h1>
+              <h1 class="hp-hero__title">Welcome to HOTELI POA</h1>
               <p class="max-w-xl text-base sm:text-lg">Browse the menu, choose dine-in, takeout or delivery, and follow your order.</p>
-              <button x-show="!root.user" @click="root.openCustomerAuth('register')" class="mt-6 rounded-lg bg-white px-6 py-3 font-bold text-[#0A2540]">Create customer account</button>
+              <p class="mt-5 text-sm font-semibold">Choose a food category to get started</p><div class="mt-5 flex flex-wrap justify-center gap-3"><button @click="root.openCustomerAuth('login')" class="rounded-lg bg-white px-5 py-2.5 font-semibold text-[#0A2540]">Sign In</button><button @click="root.openCustomerAuth('register')" class="rounded-lg border border-white/80 bg-[#0A2540]/50 px-5 py-2.5 font-semibold text-white">Create Account</button></div>
             </div>
           </section>
 
-          <section class="p-6 flex-1 overflow-auto">
+          <div x-show="root.role==='customer'&&demoBannerVisible" class="mx-4 mt-3 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-100 px-4 py-2 text-xs text-slate-600 sm:mx-6" role="status"><span>Data resets on redeploy (free tier)</span><button @click="dismissDemoBanner()" class="rounded px-2 py-1 text-slate-500 hover:bg-white" aria-label="Dismiss data reset notice">×</button></div>
+          <section class="p-4 sm:p-6 flex-1 overflow-auto">
             <template x-if="!currentCategory">
               <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <template x-for="c in filteredCategories()" :key="c.id">
@@ -235,7 +221,7 @@
         </div>
 
         <!-- Cart -->
-        <aside class="w-96 bg-white border-l flex flex-col">
+        <aside x-show="root.role!=='customer'||currentCategory||cart.length" class="w-full lg:w-96 bg-white border-t lg:border-l lg:border-t-0 flex flex-col">
           <div class="p-5 border-b">
             <h2 class="font-bold text-[#0A2540]">Current Order</h2>
             <div class="mt-3 grid grid-cols-2 gap-2 text-sm">
@@ -277,7 +263,7 @@
             <div class="flex justify-between font-bold text-lg text-[#0A2540]"><span>Total</span><span x-text="ksh(total())"></span></div>
             <button @click="openPay()" :disabled="!cart.length"
                     class="w-full py-3 rounded-lg bg-[#1E6FD9] text-white font-semibold disabled:opacity-40">
-              Charge customer
+              Place Order
             </button>
           </div>
         </aside>
@@ -319,7 +305,7 @@
             <h2 class="font-bold text-[#0A2540] mb-4">Review &amp; confirm</h2>
             <p class="text-sm text-slate-500 mb-3" x-text="order.channel === 'dine_in' ? 'Dine In' : order.channel === 'delivery' ? 'Delivery' : 'Takeout'"></p>
             <template x-if="order.channel === 'delivery'"><div class="grid gap-2 mb-4"><input x-model="order.address" required placeholder="Delivery address" class="w-full rounded-lg border px-3 py-2" /><input x-model="order.landmark" placeholder="Landmark (optional)" class="w-full rounded-lg border px-3 py-2" /><textarea x-model="order.riderNotes" rows="2" placeholder="Notes for rider (optional)" class="w-full rounded-lg border px-3 py-2"></textarea></div></template>
-            <p class="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">DEMO · Cash on delivery or pay at counter. Payment is processed when your order arrives or at the counter.</p>
+            <p class="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Cash on delivery or pay at the counter.</p>
             <template x-if="order.channel === 'dine_in'"><div class="grid gap-2 mb-4"><input x-model="order.table" placeholder="Table number" class="w-full rounded-lg border px-3 py-2" /><input x-model.number="order.guests" type="number" min="1" placeholder="Guests" class="w-full rounded-lg border px-3 py-2" /></div></template>
             <div class="text-sm flex justify-between mb-4"><span>Total</span><strong x-text="ksh(total())"></strong></div>
             <div class="space-y-2 mb-5">
@@ -375,7 +361,7 @@
             <template x-if="selected">
               <div>
                 <h2 class="font-bold text-[#0A2540] mb-3" x-text="'Order #' + selected.id.slice(0,8).toUpperCase()"></h2>
-                <section x-show="root.role==='customer'&&selected.history" class="mb-4 rounded-lg bg-slate-50 p-3"><h3 class="text-sm font-semibold">Order progress</h3><div class="mt-2 space-y-2"><template x-for="step in selected.history" :key="step.status+step.createdAt"><div class="flex items-start gap-2 text-xs"><span class="mt-1 h-2 w-2 rounded-full bg-blue-600"></span><div><strong class="capitalize" x-text="step.status.replaceAll('_',' ')"></strong><span class="ml-2 text-slate-500" x-text="new Date(step.createdAt).toLocaleString()"></span></div></div></template></div><p x-show="selected.delivery?.eta" class="mt-2 text-xs text-slate-600" x-text="'ETA: '+selected.delivery.eta"></p></section>
+                <section x-show="root.role==='customer'&&selected.history" class="mb-4 rounded-lg bg-slate-50 p-3"><div class="flex items-center justify-between gap-2"><h3 class="text-sm font-semibold">Order progress</h3><span class="text-xs text-slate-500" x-text="selected.delivery?.eta ? 'ETA: '+selected.delivery.eta : 'Est. '+estimate(selected.channel,selected.status)"></span></div><ol class="mt-3 grid grid-cols-4 gap-2"><template x-for="(stage,index) in ['Placed','Preparing','Ready','Served']" :key="stage"><li class="border-t-4 pt-2 text-[11px]" :class="index<=progressIndex(selected.status)?'border-blue-600 text-[#0A2540]':'border-slate-200 text-slate-400'" x-text="stage"></li></template></ol><div class="mt-3 space-y-2"><template x-for="step in selected.history" :key="step.status+step.createdAt"><div class="flex items-start gap-2 text-xs"><span class="mt-1 h-2 w-2 rounded-full bg-blue-600"></span><div><strong class="capitalize" x-text="step.status.replaceAll('_',' ')"></strong><span class="ml-2 text-slate-500" x-text="new Date(step.createdAt).toLocaleString()"></span></div></div></template></div></section>
                 <section x-show="root.role==='customer'&&selected.delivery" class="mb-4 rounded-lg bg-slate-50 p-3 text-sm"><strong>Delivery</strong><p x-text="selected.delivery?.address"></p><p x-show="selected.delivery?.landmark" class="text-slate-500" x-text="selected.delivery?.landmark"></p><p x-show="selected.delivery?.riderName" class="mt-2" x-text="'Rider: '+selected.delivery?.riderName+' · '+(selected.delivery?.riderPhone||'')"></p></section>
                 <div class="space-y-2 border-t pt-3">
                   <template x-for="(l,i) in selected.lines" :key="i">
@@ -397,7 +383,7 @@
                 </div>
                 <button x-show="root.role==='customer'&&['placed','confirmed'].includes(selected.status)" @click="cancelCustomerOrder(selected)" class="w-full mt-2 py-2 rounded-lg border border-red-300 text-red-700 text-sm">Cancel order</button>
                 <button x-show="['cashier','supervisor','manager','admin'].includes(root.role)" @click="mergeBills(selected)" class="w-full mt-2 py-2 rounded-lg border text-sm">Merge with another open bill</button>
-                <div x-show="['cashier','supervisor','manager','admin'].includes(root.role) && selected.paymentStatus !== 'paid' && selected.status !== 'paid'" class="grid grid-cols-2 gap-2 mt-2"><button @click="markPaid(selected,'cash')" class="py-2 rounded-lg bg-emerald-600 text-white text-sm">Mark cash paid</button><button @click="markPaid(selected,'card')" class="py-2 rounded-lg bg-blue-600 text-white text-sm">Mark card paid</button><button @click="promptMpesa(selected)" class="py-2 rounded-lg bg-green-700 text-white text-sm">Prompt M-Pesa</button></div>
+                <div x-show="['cashier','supervisor','manager','admin'].includes(root.role) && selected.paymentStatus !== 'paid' && selected.status !== 'paid'" class="grid grid-cols-2 gap-2 mt-2"><button @click="markPaid(selected,'cash')" class="py-2 rounded-lg bg-emerald-600 text-white text-sm">Mark cash paid</button><button @click="markPaid(selected,'card')" class="py-2 rounded-lg bg-blue-600 text-white text-sm">Mark card paid</button></div>
                 <button x-show="['manager','admin'].includes(root.role)" @click="clearOrder(selected)" class="w-full mt-2 py-2 rounded-lg border text-sm">Archive from active list</button>
               </div>
             </template>
@@ -604,10 +590,6 @@
                 <div class="flex items-center justify-between border-b py-3">
                   <div class="font-medium">Cash</div>
                   <button type="button" role="switch" :aria-checked="checkout.methods.cash" aria-label="Enable cash" @click="toggleMethod('cash')" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="checkout.methods.cash ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button>
-                </div>
-                <div class="flex items-center justify-between py-3">
-                  <div class="font-medium">M-Pesa</div>
-                  <button type="button" role="switch" :aria-checked="checkout.methods.mpesa" aria-label="Enable M-Pesa" @click="toggleMethod('mpesa')" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="checkout.methods.mpesa ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button>
                 </div>
 
                 <div class="mt-6 mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Receipt</div>

@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS = {
     paymentHistory: true,
     miniStatement: true,
     receipt: { enabled: true, autoPrint: false },
-    methods: { cash: true, card: true, mpesa: true }
+    methods: { cash: true, card: true }
   },
   region: { location: 'Kenya', language: 'English', predictiveText: true },
   profile: { firstName: '', lastName: '', phone: '', gender: '', photoURL: '' }

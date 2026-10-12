@@ -1,13 +1,717 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta http-equiv="refresh" content="0;url=./app/" />
-  <title>HOTELI POA</title>
+  <meta charset="UTF-8" />
+  <title>HOTELI POA POS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#1E6FD9" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="HOTELI POA" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icons/logo-192.png" />
+  <link rel="apple-touch-icon" href="/icons/logo-180.png" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body>
-  <p>Opening the customer menu… <a href="./app/">Continue</a></p>
-  <script>location.replace('./app/');</script>
+<body class="bg-slate-50">
+
+<div x-data="rootApp()" x-init="init()" x-cloak>
+  <div class="flex">
+
+    <!-- SIDEBAR -->
+    <aside x-show="role !== 'customer'" class="w-64 bg-[#0A2540] text-white flex flex-col fixed h-full">
+      <div class="p-5 flex items-center gap-3 border-b border-white/10">
+        <div class="w-10 h-10 rounded-full bg-[#1E6FD9] flex items-center justify-center font-bold">S</div>
+        <div class="font-semibold" x-text="hotelName"></div>
+      </div>
+      <nav class="flex-1 p-3 space-y-1 text-sm">
+        <template x-for="item in navItems" :key="item.id">
+          <a @click.prevent="window.location.hash = '#' + item.id" href="#"
+             :class="activeView === item.id ? 'nav-active' : 'hover:bg-white/5 text-slate-300'"
+             class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer">
+            <span x-text="item.icon"></span>
+            <span x-text="item.label"></span>
+          </a>
+        </template>
+      </nav>
+      <div class="p-4 border-t border-white/10">
+        <div class="text-sm font-medium" x-text="userName"></div>
+        <div class="text-xs text-slate-400 mb-3 capitalize" x-text="role"></div>
+        <button x-show="role!=='customer'" @click="toggleTheme()" class="mb-2 w-full rounded-lg border border-white/20 px-3 py-2 text-xs" :aria-label="theme==='dark'?'Switch to light theme':'Switch to dark theme'" x-text="theme==='dark'?'☀️ Light theme':'🌙 Dark theme'"></button>
+        <button x-show="user" @click="logout()" class="w-full text-xs py-2 rounded-lg bg-white/10 hover:bg-white/20">
+          Sign out
+        </button>
+      </div>
+    </aside>
+
+    <!-- MAIN -->
+      <main class="flex-1" :class="role === 'customer' ? 'ml-0' : 'ml-64'">
+      <header x-show="role === 'customer'" class="sticky top-0 z-20 bg-white border-b px-5 py-3 flex justify-between items-center">
+        <a href="/" class="font-bold text-[#0A2540]">HOTELI POA <span class="hidden text-blue-600 sm:inline">Food &amp; Drinks</span></a>
+        <div class="flex min-w-0 items-center gap-1 sm:gap-3"><details class="relative"><summary aria-label="More sign-in options" class="list-none cursor-pointer rounded-lg border px-3 py-2 text-lg leading-none" title="Staff sign in">☰</summary><nav class="absolute right-0 top-full z-30 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><a href="/staff" class="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">Employee Sign In</a><a href="/admin" class="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">Admin Sign In</a></nav></details><button @click="goto('pos')" aria-label="Cart" class="rounded-lg border px-3 py-2 text-sm">🛒 <span x-text="cartCount"></span></button><a x-show="user" href="#orders" class="hidden text-sm text-slate-600 sm:inline">My orders</a><a x-show="user" href="#profile" class="hidden text-sm text-slate-600 sm:inline">Profile</a><button @click="toggleTheme()" class="hidden rounded-lg border px-3 py-2 text-sm sm:inline-flex" :aria-label="theme==='dark'?'Switch to light theme':'Switch to dark theme'" x-text="theme==='dark'?'☀️':'🌙'"></button><button x-show="canInstall" @click="installApp()" class="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 sm:px-4 sm:text-sm">Install App</button><button x-show="!user" @click="openCustomerAuth('login')" class="rounded-lg border border-blue-600 px-3 py-2 text-xs font-semibold text-blue-700 sm:px-4 sm:text-sm">Sign In</button><button x-show="user" @click="logout()" class="text-sm text-blue-600">Sign out</button></div></header>
+
+      <div x-show="customerAuthOpen" x-cloak class="fixed inset-0 z-[60] grid place-items-center bg-slate-950/60 p-4" @click.self="customerAuthOpen=false">
+        <section class="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+          <div class="flex items-start justify-between"><div><p class="text-xs font-bold uppercase tracking-widest text-blue-600">HOTELI POA</p><h2 class="mt-2 text-2xl font-bold text-[#0A2540]" x-text="customerAuthMode==='register'?'Create customer account':customerAuthMode==='forgot'?'Reset password':'Customer sign in'"></h2></div><button @click="customerAuthOpen=false" class="text-2xl text-slate-400" aria-label="Close">×</button></div>
+          <form class="mt-5 space-y-3" @submit.prevent="submitCustomerAuth()">
+            <input x-show="customerAuthMode==='register'" x-model="customerName" required minlength="2" placeholder="Full name" class="w-full rounded-lg border px-3 py-3" />
+            <input x-show="customerAuthMode!=='forgot'" x-model="customerPhone" required type="tel" placeholder="Phone number" autocomplete="tel" class="w-full rounded-lg border px-3 py-3" />
+            <input x-show="customerAuthMode==='register'||customerAuthMode==='forgot'" x-model="customerEmail" required :type="customerAuthMode==='forgot'?'text':'email'" :placeholder="customerAuthMode==='forgot'?'Phone number or email address':'Email address'" autocomplete="email" class="w-full rounded-lg border px-3 py-3" />
+            <input x-show="customerAuthMode==='register'" x-model="customerAddress" placeholder="Delivery address (optional)" class="w-full rounded-lg border px-3 py-3" />
+            <input x-show="customerAuthMode==='register'" x-model="customerLandmark" placeholder="Landmark (optional)" class="w-full rounded-lg border px-3 py-3" />
+            <input x-show="customerAuthMode!=='forgot'" x-model="customerPassword" required type="password" minlength="8" placeholder="Password (8+ characters)" autocomplete="current-password" class="w-full rounded-lg border px-3 py-3" />
+            <p x-show="customerAuthError" x-text="customerAuthError" role="status" class="text-sm text-blue-700"></p>
+            <button :disabled="customerAuthBusy" class="w-full rounded-lg bg-blue-600 py-3 font-semibold text-white" x-text="customerAuthBusy?'Please wait…':customerAuthMode==='register'?'Create account':customerAuthMode==='forgot'?'Check reset options':'Sign in'"></button>
+          </form>
+          <div class="mt-4 flex flex-wrap justify-between gap-2 text-sm text-blue-700"><button x-show="customerAuthMode!=='register'" @click="customerAuthMode='register';customerAuthError=''">Create account</button><button x-show="customerAuthMode==='login'" @click="customerAuthMode='forgot';customerAuthError=''">Forgot password?</button><button x-show="customerAuthMode!=='login'" @click="customerAuthMode='login';customerAuthError=''">Back to sign in</button></div>
+        </section>
+      </div>
+
+
+      <section x-show="role==='customer'&&user&&(localStorage.getItem('hp_customer_token')||sessionStorage.getItem('hp_customer_token'))" x-cloak x-data="customerChatApp($data)" x-init="init()" class="fixed bottom-4 right-4 z-40">
+        <div x-show="open" class="mb-3 flex h-[min(70vh,480px)] w-[min(92vw,360px)] flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
+          <header class="flex items-center justify-between bg-[#0A2540] p-4 text-white"><div><strong>Front desk</strong><p class="text-xs text-blue-100">Message the front desk</p></div><button @click="open=false" aria-label="Close chat">×</button></header>
+          <div class="flex-1 space-y-2 overflow-auto p-3"><template x-for="message in messages" :key="message.id"><div class="max-w-[85%] rounded-xl p-2 text-sm" :class="message.senderType==='customer'?'ml-auto bg-blue-100 text-slate-900':'bg-slate-100 text-slate-900'"><div x-text="message.body"></div><time class="mt-1 block text-[10px] text-slate-500" x-text="new Date(message.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})"></time></div></template><p x-show="!messages.length" class="py-6 text-center text-sm text-slate-500">Send a message to the front desk.</p></div>
+          <div class="border-t p-3"><div x-show="showEmoji" class="mb-2 grid grid-cols-8 gap-1"><template x-for="emoji in emojis" :key="emoji"><button @click="draft+=emoji" x-text="emoji" class="rounded p-1 hover:bg-slate-100"></button></template></div><form @submit.prevent="send()" class="flex gap-2"><button type="button" @click="showEmoji=!showEmoji" class="rounded-lg border px-2" aria-label="Choose emoji">☺</button><input x-model="draft" @input="typing()" maxlength="2000" placeholder="Message front desk" class="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm"/><button class="rounded-lg bg-blue-600 px-3 py-2 text-white">Send</button></form></div>
+        </div>
+        <button @click="open=!open;refresh()" class="rounded-full bg-blue-600 px-5 py-3 font-semibold text-white shadow-lg">Chat with front desk</button>
+      </section>
+
+      <!-- ═══ DASHBOARD ═══ -->
+      <template x-if="role !== 'customer'"><div x-show="activeView === 'dashboard'" x-data="dashApp($data)" x-init="init()">
+        <header class="bg-white border-b px-6 py-4 flex justify-between items-center">
+          <div class="text-sm text-slate-500">Dashboard › <span class="text-[#0A2540] font-medium">Sales statistics</span></div>
+          <select x-model="period" @change="changePeriod()" class="px-3 py-2 border rounded-lg text-sm"><option value="day">Today</option><option value="week">This week</option><option value="month">This month</option></select>
+        </header>
+        <div x-show="['admin','super_admin'].includes(role)" class="p-6 space-y-5">
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <template x-for="metric in [['Orders today',overview.orders.today],['Orders placed',overview.orders.placed],['Preparing',overview.orders.preparing],['Ready',overview.orders.ready]]" :key="metric[0]">
+              <article class="rounded-xl border bg-white p-5"><p class="text-sm text-slate-500" x-text="metric[0]"></p><strong class="mt-2 block text-3xl text-[#0A2540]" x-text="metric[1] || 0"></strong></article>
+            </template>
+          </div>
+          <section class="rounded-xl border bg-white p-5"><div class="flex items-center justify-between"><div><h2 class="font-semibold text-[#0A2540]">Live orders</h2><p class="text-xs text-slate-500">Order items and customer details are visible to authorized admins.</p></div><button @click="refreshDetailed()" class="rounded border px-3 py-2 text-sm">Refresh</button></div>
+            <div class="mt-4 divide-y"><template x-for="order in liveOrders" :key="order.id"><article class="py-4"><div class="flex flex-wrap items-center justify-between gap-2"><div><strong x-text="'#'+String(order.id).slice(0,8)+' · '+(order.customer||'Customer')"></strong><span class="ml-2 rounded-full bg-slate-100 px-2 py-1 text-xs capitalize" x-text="order.status.replaceAll('_',' ')"></span></div><div class="text-xs text-slate-500" x-text="(order.channel||'').replaceAll('_',' ')+' · '+(order.table||'Delivery / takeout')+' · '+new Date(order.createdAt).toLocaleString()"></div></div><div class="mt-2 text-sm" x-text="(order.items||[]).map(item=>item.qty+'× '+item.name).join(', ')"></div><div class="mt-1 text-xs text-slate-500" x-text="order.customerPhone||''"></div><div class="mt-3 flex flex-wrap gap-2"><button x-show="['placed','new'].includes(order.status)" @click="advanceOrder(order,'confirmed')" class="rounded bg-blue-600 px-3 py-1.5 text-xs text-white">Confirm</button><button x-show="order.status==='confirmed'" @click="advanceOrder(order,'preparing')" class="rounded bg-amber-600 px-3 py-1.5 text-xs text-white">Preparing</button><button x-show="order.status==='preparing'" @click="advanceOrder(order,'ready')" class="rounded bg-emerald-600 px-3 py-1.5 text-xs text-white">Mark ready</button><button x-show="order.status==='ready'&&order.channel==='delivery'" @click="advanceOrder(order,'out_for_delivery')" class="rounded border px-3 py-1.5 text-xs">Out for delivery</button><button x-show="order.status==='ready'&&order.channel!=='delivery'" @click="advanceOrder(order,'delivered')" class="rounded border px-3 py-1.5 text-xs">Complete</button><button x-show="order.status==='out_for_delivery'" @click="advanceOrder(order,'delivered')" class="rounded border px-3 py-1.5 text-xs">Delivered</button><button x-show="order.status==='delivered'" @click="advanceOrder(order,'paid')" class="rounded border px-3 py-1.5 text-xs">Paid</button></div></article></template><p x-show="!liveOrders.length" class="py-4 text-sm text-slate-500">No active orders.</p></div>
+          </section>
+          <section class="grid gap-5 lg:grid-cols-2"><article class="rounded-xl border bg-white p-5"><div class="flex items-center justify-between"><h2 class="font-semibold text-[#0A2540]">Online now <span class="text-sm" x-text="'('+onlineUsers.count+')'"></span></h2><button @click="refreshDetailed()" class="rounded border px-3 py-2 text-sm">Refresh</button></div><div class="mt-3 divide-y"><template x-for="person in [...onlineUsers.staff,...onlineUsers.customers]" :key="person.role+person.id"><div class="flex justify-between py-2 text-sm"><span><strong x-text="person.name"></strong><span class="ml-2 rounded bg-blue-50 px-2 py-1 text-xs uppercase" x-text="person.role"></span></span><span class="text-xs text-slate-500" x-text="person.currentPage||'App'+' · '+new Date(person.lastSeen).toLocaleTimeString()"></span></div></template><p x-show="!onlineUsers.count" class="py-3 text-sm text-slate-500">No users active in the last 2 minutes.</p></div></article>
+            <article class="rounded-xl border bg-white p-5"><div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-semibold text-[#0A2540]">Audit log</h2><button @click="refreshDetailed()" class="rounded border px-3 py-2 text-sm">Refresh</button></div><div class="mt-3 flex flex-wrap gap-2"><select x-model="auditRole" @change="refreshDetailed()" class="rounded border px-2 py-1 text-sm"><option value="">All roles</option><option value="customer">Customer</option><option value="employee">Employee</option><option value="admin">Admin</option></select><input type="date" x-model="auditFrom" @change="refreshDetailed()" class="rounded border px-2 py-1 text-sm"/><input type="date" x-model="auditTo" @change="refreshDetailed()" class="rounded border px-2 py-1 text-sm"/></div><table class="mt-3 w-full text-left text-xs"><thead><tr class="border-b"><th class="py-2">Actor</th><th>Action</th><th>Timestamp</th></tr></thead><tbody><template x-for="(entry,index) in auditRows" :key="entry.createdAt+index"><tr class="border-b"><td class="py-2" x-text="entry.actorRole+' · '+(entry.actorId||'system')"></td><td x-text="entry.action"></td><td x-text="new Date(entry.createdAt).toLocaleString()"></td></tr></template></tbody></table></article></section>
+        </div>
+        <div x-show="!['admin','super_admin'].includes(role)" class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 card p-5">
+            <div class="font-semibold text-[#0A2540] mb-3">Daily sales</div>
+            <canvas id="salesChart" height="100"></canvas>
+          </div>
+          <div class="card p-5 flex flex-col items-center">
+            <div class="font-semibold text-[#0A2540] mb-3 self-start">Total Revenue</div>
+            <div class="relative w-44 h-44">
+              <canvas id="revChart"></canvas>
+              <div class="absolute inset-0 flex items-center justify-center text-2xl font-bold text-[#0A2540]"
+                   x-text="ksh(totalRevenue)"></div>
+            </div>
+            <div class="mt-3 text-xs text-slate-500" x-text="changeLabel(revenueChange)"></div>
+          </div>
+          <div class="card p-5">
+            <div class="text-slate-500 text-sm">Total Orders</div>
+            <div class="text-3xl font-bold text-[#0A2540]" x-text="periodOrders().length"></div>
+            <div class="mt-2 text-xs text-slate-500" x-text="changeLabel(orderChange)"></div>
+          </div>
+          <div class="card p-5">
+            <div class="text-slate-500 text-sm">New Customers</div>
+            <div class="text-3xl font-bold text-[#0A2540]" x-text="newCustomers"></div>
+            <div class="mt-2 text-xs text-slate-500" x-text="changeLabel(customerChange)"></div>
+          </div>
+          <div class="card p-5">
+            <div class="text-slate-500 text-sm">Best Employee</div>
+            <div class="text-lg font-semibold text-[#0A2540]" x-text="bestEmployee"></div>
+          </div>
+          <div class="card p-5">
+            <div class="text-slate-500 text-sm">Trending Dish</div>
+            <div class="text-lg font-semibold text-[#0A2540]" x-text="trendingDish"></div>
+          </div>
+          <div class="lg:col-span-2 card p-5">
+            <h2 class="font-semibold text-[#0A2540] mb-4">Best Employees</h2>
+            <div class="divide-y"><template x-for="(employee,i) in topEmployees" :key="employee.name"><div class="flex justify-between py-3 text-sm"><span><span class="text-slate-400 mr-3" x-text="String(i+1).padStart(2,'0')"></span><span class="font-medium text-slate-700" x-text="employee.name"></span></span><span class="font-semibold text-[#0A2540]" x-text="ksh(employee.sales)"></span></div></template><div x-show="!topEmployees.length" class="text-sm text-slate-400 py-4">No employee sales yet.</div></div>
+          </div>
+          <div class="card p-5">
+            <h2 class="font-semibold text-[#0A2540] mb-4">Trending Dishes</h2>
+            <div class="divide-y"><template x-for="(dish,i) in trending" :key="dish.name"><div class="flex justify-between py-3 text-sm"><span><span class="text-slate-400 mr-2" x-text="i+1 + '.'"></span><span class="text-slate-700" x-text="dish.name"></span></span><span class="font-semibold text-blue-600" x-text="dish.count + ' sold'"></span></div></template><div x-show="!trending.length" class="text-sm text-slate-400 py-4">No dish sales yet.</div></div>
+          </div>
+        </div>
+      </div></template>
+
+      <!-- ═══ MESSAGES ═══ -->
+      <section x-show="activeView === 'messages' && role !== 'customer'" x-data="messagesApp($data)" x-init="init()">
+        <header class="bg-white border-b px-6 py-5"><div class="text-sm text-slate-400">Workspace › Messages</div><h1 class="text-2xl font-bold text-[#0A2540] mt-1" x-text="mode==='team'?'Team messages':'Customer support'"></h1></header>
+        <div class="p-6"><div class="card bg-white min-h-[560px] grid grid-cols-1 md:grid-cols-[280px_1fr] overflow-hidden">
+          <div class="border-r p-4"><div class="grid grid-cols-2 gap-2"><button @click="selectMode('team')" class="rounded-lg border p-2 text-sm" :class="mode==='team'?'bg-blue-50':''">Teams</button><button @click="selectMode('customers')" class="rounded-lg border p-2 text-sm">Customers</button></div>
+            <template x-if="mode==='team'"><div><h2 class="mt-3 mb-3 text-xs uppercase tracking-wider text-slate-400">Teams</h2><template x-for="team in teams" :key="team"><button @click="selectTeam(team)" class="w-full text-left p-3 rounded-xl mt-1" :class="activeTeam===team?'bg-blue-50':'hover:bg-slate-50'"><div class="font-semibold text-[#0A2540]" x-text="team"></div><div class="text-xs text-slate-500 mt-1">Team chat</div></button></template></div></template>
+            <template x-if="mode==='customers'"><div><h2 class="mt-3 mb-3 text-xs uppercase tracking-wider text-slate-400">Customer threads</h2><template x-for="thread in supportThreads" :key="thread.customerId"><button @click="selectCustomer(thread)" class="w-full text-left p-3 rounded-xl mt-1" :class="selectedCustomer?.customerId===thread.customerId?'bg-blue-50':'hover:bg-slate-50'"><div class="font-semibold text-[#0A2540]" x-text="thread.customerName"></div><div class="text-xs text-slate-500 mt-1" x-text="thread.preview"></div><div x-show="thread.unread" class="text-xs font-bold text-blue-700" x-text="thread.unread+' unread'"></div></button></template><p x-show="!supportThreads.length" class="text-xs text-slate-500">No customer messages yet.</p></div></template>
+          </div>
+          <div class="flex flex-col"><div class="p-5 border-b font-semibold text-[#0A2540]" x-text="mode==='team'?activeTeam:(selectedCustomer?.customerName||'Select a customer')"></div><div class="flex-1 p-6 space-y-4 bg-slate-50/70 overflow-auto"><template x-for="message in messages" :key="message.id"><div class="max-w-md rounded-2xl p-4 text-sm shadow-sm" :class="(message.fromUid||message.senderId)===root.user?.uid?'ml-auto bg-blue-600 text-white':'bg-white text-slate-700'"><div class="text-xs opacity-70 mb-1" x-text="(message.fromName||message.senderName||message.senderRole) + ' · ' + time(message)"></div><p x-text="message.text||message.body"></p></div></template><div x-show="typingNames.length" class="text-xs text-slate-500 italic" x-text="typingNames.join(', ') + ' typing…'"></div></div><form class="p-4 border-t flex gap-3" @submit.prevent="send()"><input x-model="draft" @input="setTyping()" class="flex-1 px-4 py-3 rounded-xl bg-slate-100 outline-none text-sm" :placeholder="mode==='team'?'Send a kitchen or service update…':'Reply to customer…'" /><button class="px-5 rounded-xl bg-blue-600 text-white font-medium">Send</button></form></div>
+        </div></div>
+      </section>
+
+      <!-- ═══ PROFILE ═══ -->
+      <section x-show="activeView === 'profile' && user" x-data="profileApp($data)" x-init="init()">
+        <header class="bg-white border-b px-6 py-5"><div class="text-sm text-slate-400">Account › Profile</div><h1 class="text-2xl font-bold text-[#0A2540] mt-1">My profile</h1></header>
+        <div class="p-6 grid gap-6 lg:grid-cols-[320px_1fr]">
+          <div class="space-y-6"><div class="card bg-white p-6 text-center"><div class="mx-auto w-24 h-24 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-3xl font-bold overflow-hidden"><img x-show="photoURL" :src="photoURL" alt="Profile photo" class="w-full h-full object-cover" /><span x-show="!photoURL" x-text="(firstName[0] || 'S') + (lastName[0] || '')"></span></div><label class="inline-block mt-3 text-sm text-blue-600 cursor-pointer">Change photo<input type="file" accept="image/*" class="hidden" @change="uploadPhoto($event.target.files[0])" /></label><h2 class="mt-2 font-bold text-xl text-[#0A2540]" x-text="firstName + ' ' + lastName"></h2><p class="text-sm text-slate-500" x-text="root.user?.email"></p><span class="inline-block mt-3 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs capitalize" x-text="root.role"></span></div>
+            <div x-show="root.role !== 'customer'" class="card bg-white p-5"><div class="text-sm text-slate-500">Monthly sales</div><div class="mt-2 text-3xl font-bold text-[#0A2540]" x-text="ksh(monthlySales)"></div></div><div x-show="root.role !== 'customer'" class="card bg-white p-5"><div class="text-sm text-slate-500">Orders served</div><div class="mt-2 text-3xl font-bold text-[#0A2540]" x-text="ordersServed"></div></div></div>
+          <div class="card bg-white p-6"><h2 class="font-bold text-lg text-[#0A2540]">Personal information</h2><p class="text-sm text-slate-500 mt-1 mb-6">Update the details associated with your account.</p><form class="space-y-4 max-w-2xl" @submit.prevent="save()"><div class="grid sm:grid-cols-2 gap-4"><label class="text-sm text-slate-600">First name<input x-model="firstName" required class="mt-1 block w-full px-3 py-2.5 border rounded-lg outline-none focus:border-blue-500" /></label><label class="text-sm text-slate-600">Last name<input x-model="lastName" required class="mt-1 block w-full px-3 py-2.5 border rounded-lg outline-none focus:border-blue-500" /></label></div><label class="block text-sm text-slate-600">Email<input disabled :value="root.user?.email" class="mt-1 block w-full px-3 py-2.5 border rounded-lg bg-slate-50" /></label><label class="block text-sm text-slate-600">Phone<input x-model="phone" class="mt-1 block w-full px-3 py-2.5 border rounded-lg outline-none focus:border-blue-500" placeholder="Add a phone number" /></label><label class="block text-sm text-slate-600">Gender<select x-model="gender" class="mt-1 block w-full px-3 py-2.5 border rounded-lg"><option value="">Choose one</option><option>Female</option><option>Male</option><option>Prefer not to say</option></select></label><div class="flex gap-3"><button class="px-5 py-3 rounded-lg bg-blue-600 text-white font-semibold" :disabled="saving" x-text="saving ? 'Saving…' : 'Save changes'"></button><button type="button" @click="changePassword()" class="px-5 py-3 rounded-lg border text-blue-700">Reset password</button></div></form></div>
+        </div>
+      </section>
+
+      <!-- ═══ POS ═══ -->
+      <div x-show="activeView === 'pos'" x-data="posApp($data)" x-init="init()" class="flex flex-col lg:flex-row" :class="root.role === 'customer' ? '' : 'lg:h-screen'">
+        <div class="flex-1 flex flex-col">
+          <header class="bg-white border-b px-4 py-3 sm:px-6 sm:py-4 flex flex-wrap justify-between items-center gap-3">
+            <div class="text-sm text-slate-500 flex items-center gap-2">
+              <span>Food &amp; Drinks</span><span>›</span>
+              <span class="text-[#0A2540] font-medium" x-text="currentCategory?.name || 'Categories'"></span>
+            </div>
+            <input type="search" placeholder="Search…" x-model="search"
+                   class="w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-100 text-sm outline-none" />
+          </header>
+
+          <section x-show="root.role==='customer'&&!currentCategory" class="hp-hero relative mx-4 mt-4 overflow-hidden rounded-2xl sm:mx-6">
+            <div class="hp-slide hp-slide-one"><img src="/food/1.jpg" alt="Grilled meal with vegetables" /></div><div class="hp-slide hp-slide-two"><img src="/food/2.jpg" alt="Bowl of rice" /></div><div class="hp-slide hp-slide-three"><img src="/food/3.jpg" alt="Fresh orange juice" /></div><div class="hp-slide hp-slide-four"><img src="/food/4.jpg" alt="Chicken wings with a drink" /></div>
+            <div class="hp-hero__overlay"></div>
+            <div class="relative z-10 flex min-h-[250px] flex-col items-center justify-center px-4 py-8 text-center text-white sm:min-h-[400px] sm:px-5 sm:py-12">
+              <p class="text-sm font-bold uppercase tracking-[.35em]">Fresh food, made for you</p>
+              <h1 class="hp-hero__title">Welcome to HOTELI POA</h1>
+              <p class="max-w-xl text-base sm:text-lg">Browse the menu, choose dine-in, takeout or delivery, and follow your order.</p>
+              <p class="mt-5 text-sm font-semibold">Choose a food category to get started</p><div class="mt-5 flex flex-wrap justify-center gap-3"><button @click="root.openCustomerAuth('login')" class="rounded-lg bg-white px-5 py-2.5 font-semibold text-[#0A2540]">Sign In</button><button @click="root.openCustomerAuth('register')" class="rounded-lg border border-white/80 bg-[#0A2540]/50 px-5 py-2.5 font-semibold text-white">Create Account</button></div>
+            </div>
+          </section>
+
+          <div x-show="root.role==='customer'&&demoBannerVisible" class="mx-4 mt-3 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-100 px-4 py-2 text-xs text-slate-600 sm:mx-6" role="status"><span>Data resets on redeploy (free tier)</span><button @click="dismissDemoBanner()" class="rounded px-2 py-1 text-slate-500 hover:bg-white" aria-label="Dismiss data reset notice">×</button></div>
+          <section class="p-4 sm:p-6 flex-1 overflow-auto">
+            <template x-if="!currentCategory">
+              <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                <template x-for="c in filteredCategories()" :key="c.id">
+                  <button @click="selectCategory(c)"
+                          class="hp-category bg-white rounded-xl p-3 text-center border hover:border-blue-300 hover:shadow-md">
+                    <div class="font-semibold text-white" x-text="c.name"></div>
+                  </button>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="currentCategory">
+              <div>
+                <button @click="currentCategory=null" class="text-sm text-[#1E6FD9] mb-4">← Back</button>
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  <template x-for="p in filteredProducts()" :key="p.id">
+                    <button @click="selectProduct(p)"
+                            class="bg-white rounded-xl p-4 text-center border hover:shadow-md">
+                      <div class="w-full h-32 bg-blue-50 rounded-lg mb-3 overflow-hidden flex items-center justify-center text-slate-400">
+                        <template x-if="p.imageUrl"><img :src="p.imageUrl" :alt="p.name" class="w-full h-full object-cover" /></template>
+                        <template x-if="!p.imageUrl"><span class="text-sm">Image unavailable</span></template>
+                      </div>
+                      <div class="font-semibold text-[#0A2540] text-sm" x-text="p.name"></div>
+                      <div class="text-xs text-slate-400" x-text="p.unit"></div>
+                      <div class="mt-2 font-bold text-[#1E6FD9]" x-text="ksh(p.discountedPrice ?? p.price)"></div><div x-show="p.discountPercent" class="text-xs text-amber-700"><span class="line-through" x-text="ksh(p.price)"></span><span x-text="' · '+p.discountPercent+'% off'"></span></div>
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </section>
+        </div>
+
+        <!-- Cart -->
+        <aside x-show="root.role!=='customer'||currentCategory||cart.length" class="w-full lg:w-96 bg-white border-t lg:border-l lg:border-t-0 flex flex-col">
+          <div class="p-5 border-b">
+            <h2 class="font-bold text-[#0A2540]">Current Order</h2>
+            <div class="mt-3 grid grid-cols-2 gap-2 text-sm">
+              <input placeholder="Table (if dining in)" x-model="order.table" class="px-3 py-2 bg-slate-100 rounded-lg outline-none" />
+              <input type="number" min="1" placeholder="Guests" x-model.number="order.guests" class="px-3 py-2 bg-slate-100 rounded-lg outline-none" />
+              <input x-show="root.role !== 'customer'" placeholder="Customer" x-model="order.customer" class="col-span-2 px-3 py-2 bg-slate-100 rounded-lg outline-none" />
+            </div>
+          <div x-show="root.role === 'customer'" class="mt-4 space-y-3">
+            <div class="rounded-lg border p-3"><div class="mb-2 text-sm font-semibold">Available tables</div><div class="flex flex-wrap gap-2"><template x-for="table in tables" :key="table.id"><button type="button" @click="selectTable(table)" class="rounded-full border px-3 py-1.5 text-xs" :class="table.status==='available'?(order.tableId===table.id?'border-blue-600 bg-blue-50 text-blue-700':'border-emerald-300 text-emerald-700'):'border-slate-200 bg-slate-100 text-slate-500'" :disabled="table.status!=='available'"><span x-text="table.floor+' '+table.number+' · '+table.status"></span></button></template><span x-show="!tables.length" class="text-xs text-slate-500">No tables loaded.</span></div></div>
+              <input x-model="order.customerPhone" type="tel" placeholder="Phone for loyalty stamps" class="w-full rounded-lg bg-slate-100 px-3 py-2 text-sm outline-none" />
+              <p class="text-xs text-slate-500">Earn 1 stamp per paid order; 10 stamps unlock a free item.</p>
+              <div><p class="text-xs text-slate-500 mb-1">Rate your service</p><div class="flex gap-1"><template x-for="star in [1,2,3,4,5]" :key="star"><button type="button" @click="setRating(star)" class="text-2xl" :class="order.rating >= star ? 'text-amber-400' : 'text-slate-300'">★</button></template></div></div>
+              <div><p class="text-xs text-slate-500 mb-1">Optional tip</p><div class="flex gap-2"><template x-for="percent in [0,5,10,15]" :key="percent"><button type="button" @click="setTipPercent(percent)" class="px-3 py-1.5 rounded-lg border text-xs" :class="tipPercent === percent ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200'" x-text="percent ? percent + '%' : 'No tip'"></button></template></div></div>
+              <textarea rows="2" placeholder="Review or feedback (optional)" x-model="order.feedback" class="w-full px-3 py-2 bg-slate-100 rounded-lg outline-none"></textarea>
+            </div>
+          </div>
+          <div class="flex-1 overflow-auto p-4 space-y-2">
+            <template x-for="(line, i) in cart" :key="i">
+              <div class="flex items-center gap-3 bg-slate-50 rounded-lg p-3">
+                <div class="flex-1">
+                  <div class="text-sm font-medium text-[#0A2540]" x-text="line.name"></div>
+                  <div class="text-xs text-slate-500" x-text="ksh(line.price) + ' × ' + line.qty"></div>
+                </div>
+                <div class="flex items-center gap-1">
+                  <button @click="dec(i)" class="w-7 h-7 rounded-md bg-white border">−</button>
+                  <div class="w-7 text-center text-sm" x-text="line.qty"></div>
+                  <button @click="inc(i)" class="w-7 h-7 rounded-md bg-[#1E6FD9] text-white">+</button>
+                </div>
+                <div class="w-16 text-right text-sm font-semibold" x-text="ksh(line.price*line.qty)"></div>
+              </div>
+            </template>
+            <template x-if="cart.length === 0">
+              <div class="text-center text-slate-400 text-sm py-10">Tap a product to add.</div>
+            </template>
+          </div>
+          <div class="p-5 border-t space-y-3">
+            <div class="flex justify-between text-sm"><span>Subtotal</span><span x-text="ksh(subtotal())"></span></div>
+            <div class="flex justify-between text-sm"><span>Tax</span><span x-text="ksh(tax())"></span></div>
+            <div class="flex justify-between font-bold text-lg text-[#0A2540]"><span>Total</span><span x-text="ksh(total())"></span></div>
+            <button @click="openPay()" :disabled="!cart.length"
+                    class="w-full py-3 rounded-lg bg-[#1E6FD9] text-white font-semibold disabled:opacity-40">
+              Place Order
+            </button>
+          </div>
+        </aside>
+
+        <!-- Dish detail drawer -->
+        <div x-show="selectedProduct" x-cloak class="fixed inset-0 bg-slate-950/40 z-40 flex justify-end" @click.self="selectedProduct=null" @keydown.escape.window="selectedProduct=null">
+          <section class="w-full max-w-md bg-white h-full shadow-2xl flex flex-col">
+            <div class="flex justify-end p-4"><button @click="selectedProduct=null" class="text-slate-500 text-2xl" aria-label="Close">×</button></div>
+            <div class="px-6 pb-6 flex-1 overflow-auto">
+              <div class="h-64 rounded-2xl bg-blue-50 flex items-center justify-center text-7xl overflow-hidden">
+                <template x-if="selectedProduct?.imageUrl"><img :src="selectedProduct.imageUrl" :alt="selectedProduct.name" class="w-full h-full object-cover" /></template>
+                <template x-if="!selectedProduct?.imageUrl"><span x-text="categories.find(c=>c.id===selectedProduct?.categoryId)?.icon || '🍽️'"></span></template>
+              </div>
+              <div class="mt-6 text-xs uppercase tracking-widest text-blue-600" x-text="categories.find(c=>c.id===selectedProduct?.categoryId)?.name || 'Menu'"></div>
+              <h2 class="mt-2 text-2xl font-bold text-[#0A2540]" x-text="selectedProduct?.name"></h2>
+              <p class="mt-2 text-sm text-slate-500" x-text="selectedProduct?.description || 'Freshly prepared in our kitchen with carefully selected ingredients.'"></p>
+              <div class="mt-5 flex items-baseline gap-2"><span class="text-2xl font-bold text-blue-700" x-text="ksh(selectedProduct?.price)"></span><span class="text-sm text-slate-500" x-text="'per ' + (selectedProduct?.unit || 'plate')"></span></div>
+            </div>
+            <div class="p-6 border-t"><div class="flex items-center justify-between mb-4"><span class="text-sm text-slate-600">Quantity</span><div class="flex items-center gap-4"><button @click="selectedQty=Math.max(1,selectedQty-1)" class="w-9 h-9 rounded-lg border">−</button><span class="font-semibold" x-text="selectedQty"></span><button @click="selectedQty++" class="w-9 h-9 rounded-lg bg-blue-600 text-white">+</button></div></div><button @click="addToCart(selectedProduct,selectedQty); selectedProduct=null" class="w-full py-3.5 rounded-xl bg-[#1E6FD9] text-white font-semibold">Add to Order</button></div>
+          </section>
+        </div>
+
+        <!-- Order channel picker -->
+        <div x-show="showChannel" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showChannel=false">
+          <div class="bg-white rounded-xl p-6 w-full max-w-md">
+            <h2 class="font-bold text-[#0A2540] text-lg">Where do you want to eat?</h2>
+            <p class="text-sm text-slate-500 mt-1 mb-4">Choose how this order will be served.</p>
+            <div class="grid gap-3 sm:grid-cols-3">
+              <button @click="chooseChannel('dine_in')" class="rounded-lg border p-4 text-left hover:border-blue-500"><span class="text-2xl">🪑</span><span class="block mt-2 font-semibold">Dine In</span><span class="text-xs text-slate-500">20–30 min</span></button>
+              <button @click="chooseChannel('takeout')" class="rounded-lg border p-4 text-left hover:border-blue-500"><span class="text-2xl">🥡</span><span class="block mt-2 font-semibold">Takeout</span><span class="text-xs text-slate-500">15–20 min</span></button>
+              <button @click="chooseChannel('delivery')" class="rounded-lg border p-4 text-left hover:border-blue-500"><span class="text-2xl">🛵</span><span class="block mt-2 font-semibold">Delivery</span><span class="text-xs text-slate-500">30–45 min</span></button>
+            </div>
+            <button @click="showChannel=false" class="mt-5 w-full rounded-lg border px-4 py-2">Discard</button>
+          </div>
+        </div>
+        <!-- Payment modal -->
+        <div x-show="showPay" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="bg-white rounded-xl p-6 w-full max-w-sm">
+            <h2 class="font-bold text-[#0A2540] mb-4">Review &amp; confirm</h2>
+            <p class="text-sm text-slate-500 mb-3" x-text="order.channel === 'dine_in' ? 'Dine In' : order.channel === 'delivery' ? 'Delivery' : 'Takeout'"></p>
+            <template x-if="order.channel === 'delivery'"><div class="grid gap-2 mb-4"><input x-model="order.address" required placeholder="Delivery address" class="w-full rounded-lg border px-3 py-2" /><input x-model="order.landmark" placeholder="Landmark (optional)" class="w-full rounded-lg border px-3 py-2" /><textarea x-model="order.riderNotes" rows="2" placeholder="Notes for rider (optional)" class="w-full rounded-lg border px-3 py-2"></textarea></div></template>
+            <p class="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Cash on delivery or pay at the counter.</p>
+            <template x-if="order.channel === 'dine_in'"><div class="grid gap-2 mb-4"><input x-model="order.table" placeholder="Table number" class="w-full rounded-lg border px-3 py-2" /><input x-model.number="order.guests" type="number" min="1" placeholder="Guests" class="w-full rounded-lg border px-3 py-2" /></div></template>
+            <div class="text-sm flex justify-between mb-4"><span>Total</span><strong x-text="ksh(total())"></strong></div>
+            <div class="space-y-2 mb-5">
+              <template x-for="m in paymentOptions" :key="m.v">
+                <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:border-[#1E6FD9]"
+                       :class="payMethod===m.v && 'border-[#1E6FD9] bg-blue-50'">
+                  <input type="radio" :value="m.v" x-model="payMethod" class="hidden" />
+                  <span x-text="m.l"></span>
+                </label>
+              </template>
+            </div>
+            <div class="flex gap-3">
+              <button @click="showPay=false; showChannel=true" class="flex-1 py-2.5 rounded-lg border">Back</button>
+              <button @click="finalizeOrder()" :disabled="processing"
+                      class="flex-1 py-2.5 rounded-lg bg-[#1E6FD9] text-white">
+                <span x-text="processing ? 'Processing…' : 'Confirm'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ ORDERS ═══ -->
+      <div x-show="activeView === 'orders' && (role !== 'customer' || user)" x-data="ordersApp($data)" x-init="init()">
+        <header class="bg-white border-b px-6 py-4">
+          <h1 class="text-xl font-bold text-[#0A2540]" x-text="role === 'customer' ? 'My Orders' : 'Bills & Payment History'"></h1>
+        </header>
+        <div x-show="role === 'admin'" class="p-6">
+          <div class="mx-auto max-w-3xl rounded-xl border bg-white p-6"><h2 class="text-lg font-semibold text-[#0A2540]">Order activity</h2><p class="mt-1 text-sm text-slate-500">Order contents and customer details are hidden from this view.</p><div class="mt-5 grid gap-3 sm:grid-cols-4"><template x-for="metric in [['Placed',overview.orders.placed],['Preparing',overview.orders.preparing],['Ready',overview.orders.ready],['Today',overview.orders.today]]" :key="metric[0]"><div class="rounded-lg bg-slate-50 p-4"><span class="text-sm text-slate-500" x-text="metric[0]"></span><strong class="mt-1 block text-2xl" x-text="metric[1]||0"></strong></div></template></div></div>
+        </div>
+        <div x-show="role !== 'admin'" class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 space-y-3">
+            <template x-for="o in orders" :key="o.id">
+              <button @click="select(o)"
+                      class="w-full text-left bg-white rounded-xl p-4 border hover:border-[#1E6FD9]">
+                <div class="flex justify-between">
+                  <div>
+                    <div class="font-semibold text-[#0A2540]" x-text="'#' + o.id.slice(0,8).toUpperCase()"></div>
+                    <div class="text-xs text-slate-500 mt-1">
+                      Table <span x-text="o.table||'—'"></span> · <span x-text="o.guests"></span> guests · <span x-text="o.customer||'Walk-in'"></span>
+                    </div>
+                    <div class="text-xs text-slate-400 mt-1"><span x-text="o.waiterName || 'Customer order'"></span> · <span x-text="timestamp(o)"></span></div>
+                  </div>
+                  <div class="text-right">
+                    <div class="font-bold text-[#1E6FD9]" x-text="ksh(o.total)"></div>
+                    <div class="text-xs mt-1 px-2 py-0.5 rounded-full inline-block" :class="o.paymentStatus === 'paid' || o.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'" x-text="o.paymentStatus || o.status || 'pending'"></div>
+                  </div>
+                </div>
+              </button>
+            </template>
+          </div>
+          <div x-show="selected" class="card p-5 h-fit">
+            <template x-if="selected">
+              <div>
+                <h2 class="font-bold text-[#0A2540] mb-3" x-text="'Order #' + selected.id.slice(0,8).toUpperCase()"></h2>
+                <section x-show="root.role==='customer'&&selected.history" class="mb-4 rounded-lg bg-slate-50 p-3"><div class="flex items-center justify-between gap-2"><h3 class="text-sm font-semibold">Order progress</h3><span class="text-xs text-slate-500" x-text="selected.delivery?.eta ? 'ETA: '+selected.delivery.eta : 'Est. '+estimate(selected.channel,selected.status)"></span></div><ol class="mt-3 grid grid-cols-4 gap-2"><template x-for="(stage,index) in ['Placed','Preparing','Ready','Served']" :key="stage"><li class="border-t-4 pt-2 text-[11px]" :class="index<=progressIndex(selected.status)?'border-blue-600 text-[#0A2540]':'border-slate-200 text-slate-400'" x-text="stage"></li></template></ol><div class="mt-3 space-y-2"><template x-for="step in selected.history" :key="step.status+step.createdAt"><div class="flex items-start gap-2 text-xs"><span class="mt-1 h-2 w-2 rounded-full bg-blue-600"></span><div><strong class="capitalize" x-text="step.status.replaceAll('_',' ')"></strong><span class="ml-2 text-slate-500" x-text="new Date(step.createdAt).toLocaleString()"></span></div></div></template></div></section>
+                <section x-show="root.role==='customer'&&selected.delivery" class="mb-4 rounded-lg bg-slate-50 p-3 text-sm"><strong>Delivery</strong><p x-text="selected.delivery?.address"></p><p x-show="selected.delivery?.landmark" class="text-slate-500" x-text="selected.delivery?.landmark"></p><p x-show="selected.delivery?.riderName" class="mt-2" x-text="'Rider: '+selected.delivery?.riderName+' · '+(selected.delivery?.riderPhone||'')"></p></section>
+                <div class="space-y-2 border-t pt-3">
+                  <template x-for="(l,i) in selected.lines" :key="i">
+                    <div class="flex items-center justify-between text-sm">
+                      <span x-text="l.qty + '× ' + l.name"></span>
+                      <span x-text="ksh(l.price*l.qty)"></span>
+                      <button x-show="['cashier','supervisor','manager','admin'].includes(root.role)" @click="splitLine(selected,l)" class="ml-2 text-xs text-blue-600">Split</button>
+                    </div>
+                  </template>
+                </div>
+                <div class="border-t mt-3 pt-3 font-bold flex justify-between">
+                  <span>Total</span><span x-text="ksh(selected.total)"></span>
+                </div>
+                <div class="text-xs text-slate-500 mt-2">Payment: <span class="capitalize" x-text="selected.paymentStatus || selected.status || 'pending'"></span> · <span x-text="selected.paymentMethod || 'not selected'"></span></div>
+                <div x-show="selected.feedback" class="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600"><span x-text="'Customer rating: ' + (selected.rating || '—') + ' / 5' "></span><p class="mt-1" x-text="selected.feedback"></p></div>
+                <div class="flex gap-2 mt-4">
+                  <button @click="print(selected)" class="flex-1 py-2 rounded-lg border text-sm">🖨️ Print</button>
+                  <button @click="pdf(selected)" class="flex-1 py-2 rounded-lg bg-[#1E6FD9] text-white text-sm">📄 PDF</button>
+                </div>
+                <button x-show="root.role==='customer'&&['placed','confirmed'].includes(selected.status)" @click="cancelCustomerOrder(selected)" class="w-full mt-2 py-2 rounded-lg border border-red-300 text-red-700 text-sm">Cancel order</button>
+                <button x-show="['cashier','supervisor','manager','admin'].includes(root.role)" @click="mergeBills(selected)" class="w-full mt-2 py-2 rounded-lg border text-sm">Merge with another open bill</button>
+                <div x-show="['cashier','supervisor','manager','admin'].includes(root.role) && selected.paymentStatus !== 'paid' && selected.status !== 'paid'" class="grid grid-cols-2 gap-2 mt-2"><button @click="markPaid(selected,'cash')" class="py-2 rounded-lg bg-emerald-600 text-white text-sm">Mark cash paid</button><button @click="markPaid(selected,'card')" class="py-2 rounded-lg bg-blue-600 text-white text-sm">Mark card paid</button></div>
+                <button x-show="['manager','admin'].includes(root.role)" @click="clearOrder(selected)" class="w-full mt-2 py-2 rounded-lg border text-sm">Archive from active list</button>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ PRODUCTS ═══ -->
+      <div x-show="activeView === 'products' && ['manager','admin'].includes(role)" x-data="productManager($data)" x-init="init()">
+        <header class="bg-white border-b px-6 py-4 flex justify-between">
+          <h1 class="text-xl font-bold text-[#0A2540]">Product Management</h1>
+          <div class="flex gap-2"><button @click="addCategory()" class="rounded-lg border px-3 py-2 text-sm">+ Category</button><button @click="openAdd()" class="bg-[#1E6FD9] text-white px-4 py-2 rounded-lg text-sm">+ Add item</button></div>
+        </header>
+        <div class="p-6">
+          <div class="mb-3 flex flex-wrap gap-2"><template x-for="c in categories" :key="c.id"><button @click="filterCat=c.id" class="rounded-full border px-3 py-2 text-sm" :class="filterCat===c.id?'bg-[#0A2540] text-white':'bg-white'" x-text="c.name"></button></template><button @click="filterCat=''" class="rounded-full border px-3 py-2 text-sm" :class="!filterCat?'bg-[#0A2540] text-white':'bg-white'">All items</button></div>
+          <div class="flex gap-4 mb-6">
+            <input type="search" placeholder="Search…" x-model="search"
+                   class="flex-1 px-4 py-2 rounded-lg border outline-none focus:border-[#1E6FD9]" />
+            <select x-model="filterCat" class="px-4 py-2 rounded-lg border outline-none">
+              <option value="">All Categories</option>
+              <template x-for="c in categories" :key="c.id">
+                <option :value="c.id" x-text="c.name"></option>
+              </template>
+            </select>
+          </div>
+          <div class="bg-white rounded-xl border overflow-hidden">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-slate-600">
+                <tr>
+                  <th class="px-4 py-3">Image</th><th class="px-4 py-3">Name</th><th class="px-4 py-3">Category</th>
+                  <th class="px-4 py-3">Price / discount</th><th class="px-4 py-3">Unit</th>
+                  <th class="px-4 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                <template x-for="p in filtered()" :key="p.id">
+                  <tr>
+                    <td class="px-4 py-3"><img x-show="p.imagePath || p.imageUrl" :src="p.imagePath || p.imageUrl" :alt="p.name" class="h-10 w-10 rounded object-cover" /></td>
+                    <td class="px-4 py-3 font-medium" x-text="p.name"></td>
+                    <td class="px-4 py-3 text-slate-500" x-text="catName(p.categoryId)"></td>
+                    <td class="px-4 py-3 text-[#1E6FD9] font-semibold"><span x-text="ksh(p.price)"></span><span x-show="p.discountPercent" class="ml-1 rounded bg-amber-100 px-2 py-1 text-xs text-amber-800" x-text="p.discountPercent+'% off'"></span></td>
+                    <td class="px-4 py-3 text-slate-500" x-text="p.unit"></td>
+                    <td class="px-4 py-3">
+                      <button @click="openEdit(p)" class="text-[#1E6FD9] mr-3">Edit</button>
+                      <button @click="remove(p.id)" class="text-red-500">Delete</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div x-show="showModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="bg-white rounded-xl p-6 w-full max-w-md">
+            <h2 class="text-lg font-bold text-[#0A2540] mb-4" x-text="editing ? 'Edit Product' : 'Add Product'"></h2>
+            <div class="space-y-3">
+              <input placeholder="Name" x-model="form.name" class="w-full px-3 py-2 bg-slate-50 rounded-lg border outline-none" />
+              <select x-model="form.categoryId" class="w-full px-3 py-2 bg-slate-50 rounded-lg border outline-none">
+                <template x-for="c in categories" :key="c.id">
+                  <option :value="c.id" x-text="c.name"></option>
+                </template>
+              </select>
+              <div class="flex gap-3">
+                <input type="number" step="0.01" placeholder="Price" x-model.number="form.price"
+                       class="w-1/2 px-3 py-2 bg-slate-50 rounded-lg border outline-none" />
+                <input placeholder="Unit" x-model="form.unit"
+                       class="w-1/2 px-3 py-2 bg-slate-50 rounded-lg border outline-none" />
+              </div>
+              <label class="block text-sm">Discount (%)<input type="number" min="0" max="100" step="1" x-model.number="form.discount_percent" class="mt-1 w-full rounded-lg border bg-slate-50 px-3 py-2"/><span class="text-xs text-slate-500">Set 0 for no discount.</span></label>
+              <textarea placeholder="Description" x-model="form.description" class="w-full px-3 py-2 bg-slate-50 rounded-lg border outline-none"></textarea>
+              <div x-show="editing?.imagePath || editing?.imageUrl" class="flex items-center gap-3"><img :src="editing?.imagePath || editing?.imageUrl" class="h-16 w-16 rounded object-cover"/><button type="button" @click="clearImage=true" class="text-sm text-red-600">Remove current photo</button></div>
+              <label class="block text-sm text-slate-600" x-text="editing ? 'Choose a new photo to replace current (optional)' : 'Add a product photo (optional)'"></label><input type="file" accept="image/jpeg,image/png,image/webp" @change="imageFile=$event.target.files[0] || null;clearImage=false" class="block w-full text-sm" />
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+              <button @click="showModal=false" class="px-4 py-2 rounded-lg border">Cancel</button>
+              <button @click="save()" class="px-4 py-2 rounded-lg bg-[#1E6FD9] text-white">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ FLOOR / REGISTER / STAFF ═══ -->
+      <section x-show="activeView === 'floor' && ['manager','admin'].includes(role)" x-data="floorApp($data)" x-init="init()" class="min-h-full bg-slate-50">
+        <header class="bg-white border-b px-6 py-4 flex flex-wrap items-center justify-between gap-3"><div><div class="text-sm text-slate-400">POS › Floor</div><h1 class="text-xl font-bold text-[#0A2540]">Floor &amp; Tables</h1></div><div class="flex gap-2"><button @click="showTax=true" class="rounded-lg border px-4 py-2">Tax display</button><button @click="openRegister()" class="rounded-lg bg-[#1E6FD9] px-4 py-2 text-white">Opening Control</button></div></header>
+        <div class="p-6 grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
+          <div class="space-y-4"><div class="flex gap-2"><template x-for="name in floors" :key="name"><button @click="floor=name" class="rounded-lg px-4 py-2" :class="floor===name?'bg-[#0A2540] text-white':'bg-white border'" x-text="name"></button></template></div><div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4"><template x-for="table in tables.filter(t=>t.floor===floor)" :key="table.id"><button @click="openTable(table)" class="rounded-xl border p-5 text-left shadow-sm" :class="statusClass(table.status)"><span class="text-xs uppercase" x-text="table.status"></span><strong class="mt-3 block text-2xl" x-text="'Table '+table.number"></strong><span class="mt-2 block text-xs">Tap for order &amp; display</span><select @click.stop @change="setStatus(table,$event.target.value)" class="mt-3 rounded border bg-white px-2 py-1 text-xs text-slate-800"><option value="available" :selected="table.status==='available'">Available</option><option value="occupied" :selected="table.status==='occupied'">Occupied</option><option value="reserved" :selected="table.status==='reserved'">Reserved</option><option value="cleaning" :selected="table.status==='cleaning'">Needs cleaning</option></select></button></template></div>
+            <div class="rounded-xl bg-white p-4 border"><h2 class="font-semibold">Add table</h2><div class="mt-3 flex gap-2"><input x-model="newFloor" placeholder="Floor / area" class="min-w-0 flex-1 rounded-lg border px-3 py-2"/><input type="number" min="1" x-model="newNumber" placeholder="Table number" class="w-32 rounded-lg border px-3 py-2"/><button @click="addTable()" class="rounded-lg bg-blue-600 px-4 py-2 text-white">Add</button></div></div>
+          </div>
+          <div class="space-y-5"><div class="rounded-xl bg-white p-5 border"><h2 class="font-semibold">Menu categories</h2><button @click="addCategory()" class="mt-3 rounded-lg border px-3 py-2 text-sm">+ Add category</button><div class="mt-3 divide-y"><template x-for="c in root.categories" :key="c.id"><div class="flex items-center gap-2 py-2 text-sm"><template x-if="editingCategoryId===c.id"><input x-model="editingCategoryName" class="min-w-0 flex-1 rounded border px-2 py-1"/></template><span x-show="editingCategoryId!==c.id" class="min-w-0 flex-1" x-text="c.name"></span><span class="shrink-0"><button x-show="editingCategoryId!==c.id" @click="startRename(c)" class="text-blue-600">Edit</button><button x-show="editingCategoryId===c.id" @click="saveCategory(c)" class="text-emerald-700">Save</button><button @click="removeCategory(c)" class="ml-3 text-red-600">Remove</button></span></div></template></div></div>
+            <div class="rounded-xl bg-white p-5 border"><h2 class="font-semibold">Staff accounts</h2><div class="mt-3 grid gap-2 sm:grid-cols-2"><input x-model="newStaffName" placeholder="Full name" class="rounded-lg border px-3 py-2"/><input x-model="newStaffUser" placeholder="Username" class="rounded-lg border px-3 py-2"/><input x-model="newStaffPassword" type="password" placeholder="Password (8+ chars)" class="rounded-lg border px-3 py-2"/><select x-model="newStaffRole" class="rounded-lg border px-3 py-2"><option value="waiter">Employee</option><option value="kitchen">Cook / Kitchen</option><option value="cashier">Cashier</option><option value="supervisor">Supervisor</option><option value="manager">Manager</option></select></div><button @click="addStaff()" class="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white">Create staff login</button><div class="mt-4 divide-y"><template x-for="member in staff" :key="member.id"><div class="flex items-center justify-between py-2 text-sm"><span><strong x-text="member.name"></strong> · <span x-text="member.role"></span></span><button @click="removeStaff(member)" class="text-red-600">Remove</button></div></template></div></div>
+          </div>
+        </div>
+        <div x-show="showOpen" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-black/50"><div class="w-full max-w-md rounded-xl bg-white p-6"><h2 class="text-lg font-bold">Opening Control</h2><label class="mt-4 block text-sm">Opening cash (KSh)<input type="number" min="0" x-model.number="openingCash" class="mt-1 w-full rounded-lg border px-3 py-2"/></label><label class="mt-3 block text-sm">Opening note<textarea x-model="openingNote" class="mt-1 w-full rounded-lg border px-3 py-2"></textarea></label><div class="mt-5 flex justify-end gap-2"><button @click="discardRegister()" class="rounded-lg border px-4 py-2">Discard</button><button @click="confirmRegister()" class="rounded-lg bg-blue-600 px-4 py-2 text-white">Open Register</button></div></div></div>
+        <div x-show="showTax" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-black/50"><div class="w-full max-w-md rounded-xl bg-white p-6"><h2 class="text-lg font-bold">How do you want to display prices?</h2><p class="mt-2 text-sm text-slate-500">Example: KSh 10.00 including 16% tax contains KSh 8.62 before tax.</p><label class="mt-4 block text-sm">Tax rate (%)<input type="number" x-model.number="settings.taxRate" class="mt-1 w-full rounded-lg border px-3 py-2"/></label><div class="mt-4 grid grid-cols-2 gap-3"><button @click="acceptTax('included')" class="rounded-lg border p-3" :class="settings.taxMode==='included'?'border-blue-600 bg-blue-50':''">Tax Included</button><button @click="acceptTax('excluded')" class="rounded-lg border p-3" :class="settings.taxMode==='excluded'?'border-blue-600 bg-blue-50':''">Tax Excluded</button></div><button @click="discardTax()" class="mt-4 w-full rounded-lg px-4 py-2 text-slate-600">Discard</button></div></div>
+        <div x-show="showQr" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-black/50" @click.self="showQr=null"><div class="w-full max-w-sm rounded-xl bg-white p-6 text-center"><h2 class="text-lg font-bold" x-text="showQr ? 'Table '+showQr.number+' · Customer Display' : ''"></h2><img x-show="showQr?.qrURL" :src="showQr?.qrURL" alt="Scan to open this table’s customer display" class="mx-auto my-4 h-52 w-52 rounded-lg border p-2"/><p class="my-2 text-sm text-slate-600">Scan the table display QR or open its secure link.</p><a :href="showQr ? displayUrl(showQr) : '/display'" target="_blank" rel="noopener" class="block break-all rounded-lg bg-slate-50 p-3 text-xs text-blue-600" x-text="showQr ? displayUrl(showQr) : ''"></a><div class="mt-4 flex gap-2"><button @click="launchDisplay(showQr)" class="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-white">Open Customer Display</button><button @click="openPos(showQr);showQr=null" class="rounded-lg border px-3 py-2">Start order</button></div><button @click="showQr=null" class="mt-3 w-full text-sm text-slate-500">Discard</button></div></div>
+      </section>
+
+      <!-- ═══ KITCHEN DISPLAY ═══ -->
+      <section x-show="activeView === 'kitchen' && role !== 'admin' && ['waiter','cashier','supervisor','manager','kitchen'].includes(role)" x-data="kitchenApp()" x-init="if(role !== 'admin') init()" class="min-h-full bg-slate-50 p-6"><header class="mb-5 flex items-center justify-between"><div><div class="text-sm text-slate-400">POS › Kitchen</div><h1 class="text-xl font-bold text-[#0A2540]">Kitchen Display</h1></div><span class="text-sm text-slate-500">Live order queue</span></header><div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"><template x-for="order in orders" :key="order.id"><article class="rounded-xl border bg-white p-5 shadow-sm"><div class="flex justify-between"><strong x-text="'#'+order.id.slice(0,8)"></strong><span class="rounded-full bg-amber-50 px-2 py-1 text-xs capitalize" x-text="order.status"></span></div><div class="mt-1 text-sm text-slate-500" x-text="(order.channel||'takeout').replace('_',' ')+' · '+(order.table||'')"></div><ul class="mt-4 space-y-2"><template x-for="line in order.lines||[]" :key="line.id"><li class="flex justify-between text-sm"><span x-text="line.name"></span><strong x-text="'× '+(line.qty||line.quantity)"></strong></li></template></ul><p x-show="order.riderName" class="mt-3 text-xs text-slate-500" x-text="'Rider: '+order.riderName+' · '+order.riderPhone"></p><div class="mt-5 flex gap-2"><button x-show="order.status==='confirmed'" @click="setStatus(order,'preparing')" class="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">Preparing</button><button x-show="order.status==='preparing'" @click="setStatus(order,'ready')" class="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white">Ready</button></div></article></template><p x-show="!orders.length" class="text-slate-500">No active kitchen tickets.</p></div></section>
+
+      <!-- ═══ SETTINGS ═══ -->
+      <div x-show="activeView === 'settings' && (role !== 'customer' || user)" x-data="settingsApp($data)" x-init="init()">
+        <header class="bg-white border-b px-6 py-4">
+          <h1 class="text-xl font-bold text-[#0A2540]">Settings</h1>
+        </header>
+        <div class="p-6 grid grid-cols-1 md:grid-cols-4 gap-6">
+          <aside class="card p-4 space-y-1 text-sm">
+            <template x-for="t in [
+              {id:'profile',   l:'👤 Profile'},
+              {id:'general',   l:'🏨 Hotel', admin:true},
+              {id:'notifications', l:'🔔 Notifications'},
+              {id:'appearance', l:'🎨 Appearance'},
+              {id:'checkout',  l:'💳 Checkout'},
+              {id:'security',  l:'🔒 Security'},
+              {id:'region', l:'🌐 Language & Region'}
+            ]" :key="t.id">
+              <button @click="tab=t.id"
+                      x-show="!t.admin || root.isManager"
+                      :class="tab===t.id ? 'bg-[#1E6FD9] text-white' : 'hover:bg-slate-100'"
+                      class="w-full text-left px-3 py-2 rounded-lg"
+                      x-text="t.l"></button>
+            </template>
+          </aside>
+          <div class="md:col-span-3 card p-6">
+            <template x-if="tab==='profile'">
+              <div>
+                <h3 class="settings__title text-lg font-bold text-[#0A2540]">Profile</h3>
+                <div class="mb-6 mt-5 flex items-center gap-5">
+                  <label class="relative cursor-pointer" aria-label="Upload profile photo">
+                    <img :src="root.user?.photoURL || profile.photoURL || '/icons/logo-192.png'" alt="Profile photo" class="h-20 w-20 rounded-full border-2 border-blue-500 object-cover" />
+                    <input type="file" accept="image/*" class="hidden" @change="uploadAvatar($event)" />
+                    <span class="absolute bottom-0 right-0 grid h-6 w-6 place-items-center rounded-full bg-blue-600 text-sm text-white" x-text="avatarUploading ? '…' : '+'"></span>
+                  </label>
+                  <div>
+                    <div class="font-semibold" x-text="root.userName"></div>
+                    <div class="text-xs capitalize text-slate-500" x-text="root.role"></div>
+                  </div>
+                </div>
+                <div class="max-w-2xl space-y-4">
+                  <div class="grid gap-4 sm:grid-cols-2">
+                    <label class="text-sm text-slate-600">First name<input placeholder="First name" x-model="profile.firstName" class="mt-1 w-full rounded-lg border px-3 py-2" /></label>
+                    <label class="text-sm text-slate-600">Last name<input placeholder="Last name" x-model="profile.lastName" class="mt-1 w-full rounded-lg border px-3 py-2" /></label>
+                  </div>
+                  <label class="block text-sm text-slate-600">Phone<input placeholder="Phone" x-model="profile.phone" class="mt-1 w-full rounded-lg border px-3 py-2" /></label>
+                  <label class="block text-sm text-slate-600">Gender<select x-model="profile.gender" class="mt-1 w-full rounded-lg border px-3 py-2"><option value="">Choose one</option><option>Female</option><option>Male</option><option>Prefer not to say</option></select></label>
+                  <button type="button" @click="saveAll()" class="rounded-lg bg-[#1E6FD9] px-4 py-2 text-white">Save Changes</button>
+                </div>
+              </div>
+            </template>
+            <template x-if="tab==='general'">
+              <div class="space-y-4">
+                <h2 class="font-bold text-[#0A2540]">Hotel Settings</h2>
+                <label class="block text-sm">Hotel name</label>
+                <input x-model="settings.hotelName" class="w-full px-3 py-2 border rounded-lg" />
+                <label class="block text-sm">Tax rate (%)</label>
+                <input type="number" x-model.number="settings.taxRate" class="w-full px-3 py-2 border rounded-lg" />
+                <label class="block text-sm">Price display</label>
+                <select x-model="settings.taxMode" class="w-full px-3 py-2 border rounded-lg"><option value="included">Tax Included</option><option value="excluded">Tax Excluded</option></select>
+                <label class="block text-sm">Loyalty threshold (stamps)</label><input type="number" min="1" max="100" x-model.number="settings.loyaltyThreshold" class="w-full px-3 py-2 border rounded-lg" />
+                <label class="block text-sm">Delivery fee (cents)</label><input type="number" min="0" x-model.number="settings.deliveryFeeCents" class="w-full px-3 py-2 border rounded-lg" />
+                <label class="block text-sm">Delivery service area</label><input x-model="settings.serviceAreaText" class="w-full px-3 py-2 border rounded-lg" />
+                <label class="block text-sm">Receipt footer</label><input x-model="settings.receiptFooterText" class="w-full px-3 py-2 border rounded-lg" />
+                <button x-show="root.isManager" @click="saveSettings()" class="bg-[#1E6FD9] text-white px-4 py-2 rounded-lg">Save Changes</button>
+              </div>
+            </template>
+            <template x-if="tab==='checkout'">
+              <div>
+                <h3 class="settings__title text-lg font-bold text-[#0A2540]">Checkout settings</h3>
+
+                <div class="mt-5 mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Payment history</div>
+                <div class="flex items-center justify-between border-b py-3">
+                  <div>
+                    <div class="font-medium">Save payment history</div>
+                    <button x-show="root.isManager" type="button" @click="clearHistory()" class="text-xs text-blue-600 hover:underline">Clear history</button>
+                  </div>
+                  <button type="button" role="switch" :aria-checked="checkout.paymentHistory" aria-label="Save payment history" @click="toggleSaveHistory()" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="checkout.paymentHistory ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button>
+                </div>
+
+                <section x-show="checkout.paymentHistory && checkout.miniStatement" class="mt-6">
+                  <div class="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Mini statement</div>
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                      <tbody>
+                        <template x-for="(m,i) in miniStatement" :key="m.id || i">
+                          <tr class="border-b border-slate-100">
+                            <td class="py-3 pr-3 text-slate-500" x-text="m.createdAt?.toDate?.().toLocaleDateString('en-KE') || 'Sync pending'"></td>
+                            <td class="py-3" x-text="m.description || ('Order #' + String(m.id || '').slice(0,8).toUpperCase())"></td>
+                            <td class="py-3 text-right font-semibold" x-text="ksh(m.amount ?? m.total)"></td>
+                          </tr>
+                        </template>
+                        <template x-if="miniStatement.length === 0">
+                          <tr><td colspan="3" class="py-5 text-center text-slate-400">No transactions yet</td></tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <div class="mt-6 mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Payment method</div>
+                <div class="flex items-center justify-between border-b py-3">
+                  <div class="font-medium">Bank card</div>
+                  <button type="button" role="switch" :aria-checked="checkout.methods.card" aria-label="Enable bank card" @click="toggleMethod('card')" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="checkout.methods.card ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button>
+                </div>
+                <div class="flex items-center justify-between border-b py-3">
+                  <div class="font-medium">Cash</div>
+                  <button type="button" role="switch" :aria-checked="checkout.methods.cash" aria-label="Enable cash" @click="toggleMethod('cash')" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="checkout.methods.cash ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button>
+                </div>
+
+                <div class="mt-6 mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Receipt</div>
+                <div class="flex items-center justify-between border-b py-3">
+                  <div class="font-medium">Enable receipts</div>
+                  <button type="button" role="switch" :aria-checked="checkout.receipt.enabled" aria-label="Enable receipts" @click="toggleReceipt('enabled')" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="checkout.receipt.enabled ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button>
+                </div>
+                <div class="flex items-center justify-between py-3">
+                  <div class="font-medium">Auto-print after payment</div>
+                  <button type="button" role="switch" :aria-checked="checkout.receipt.autoPrint" aria-label="Auto-print receipts after payment" @click="toggleReceipt('autoPrint')" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="checkout.receipt.autoPrint ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button>
+                </div>
+              </div>
+            </template>
+            <template x-if="tab==='security'">
+              <div>
+                <h3 class="settings__title text-lg font-bold text-[#0A2540]">Security</h3>
+
+                <div class="mb-6 rounded-xl bg-blue-50 p-4">
+                  <div class="flex gap-3">
+                    <span class="text-xl" aria-hidden="true">🔔</span>
+                    <div>
+                      <div class="font-semibold">Security alert</div>
+                      <div class="text-xs text-slate-500">Review recent activity and protect your account.</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mb-3 mt-7 text-xs font-semibold uppercase tracking-wide text-slate-500">Where you're logged in</div>
+                <p x-show="sessions.length === 0" class="py-3 text-sm text-slate-500">No session records are available.</p>
+                <template x-for="s in sessions" :key="s.id">
+                  <div class="flex items-center justify-between gap-4 border-b py-3 text-sm">
+                    <div>
+                      <div class="font-medium" x-text="(s.device || 'Device') + ' — ' + (s.platform || 'Unknown platform')"></div>
+                      <div class="text-xs" :class="s.active ? 'text-emerald-600' : 'text-slate-400'" x-text="(s.active ? 'Active' : 'Offline') + ' · ' + (s.createdAt?.toDate?.().toLocaleDateString() || 'Date unavailable')"></div>
+                    </div>
+                    <button x-show="s.active" type="button" @click="endSession(s.id)" class="text-xs text-red-600 hover:underline">End session</button>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <template x-if="tab==='notifications'">
+              <div class="space-y-4">
+                <h2 class="font-bold text-[#0A2540]">Notifications</h2>
+                <p class="text-sm text-slate-500">Select the notifications you want to receive.</p>
+                <table class="w-full text-left text-sm">
+                  <thead><tr class="border-b text-slate-500"><th class="py-3">Notifications</th><th class="py-3 text-center">Push (unavailable)</th><th class="py-3 text-center">Email</th></tr></thead>
+                  <tbody>
+                    <template x-for="notification in notifList" :key="notification">
+                      <tr class="border-b">
+                        <td class="py-3 pr-4" x-text="notification"></td>
+                        <td class="py-3 text-center"><button type="button" role="switch" :aria-checked="notif[notification].push" :disabled="true" :aria-label="'Push notifications are unavailable for ' + notification" class="toggle opacity-50 cursor-not-allowed inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="notif[notification].push ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button></td>
+                        <td class="py-3 text-center"><button type="button" role="switch" :aria-checked="notif[notification].email" :aria-label="'Email notifications for ' + notification" @click="toggleEmail(notification)" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="notif[notification].email ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+            <template x-if="tab==='appearance'">
+              <div>
+                <h2 class="font-bold text-[#0A2540]">Appearance</h2>
+                <div class="flex items-center justify-between border-b py-4">
+                  <div><div class="font-semibold">Light</div><div class="text-xs text-slate-500">Default theme</div></div>
+                  <button type="button" role="switch" :aria-checked="appearance.theme === 'light'" aria-label="Use light theme" @click="setTheme('light')" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="appearance.theme === 'light' ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button>
+                </div>
+                <div class="flex items-center justify-between border-b py-4">
+                  <div><div class="font-semibold">Dark</div><div class="text-xs text-slate-500">Easier on the eyes at night</div></div>
+                  <button type="button" role="switch" :aria-checked="appearance.theme === 'dark'" aria-label="Use dark theme" @click="setTheme('dark')" class="toggle inline-flex h-6 w-11 items-center rounded-full p-1 transition" :class="appearance.theme === 'dark' ? 'toggle-on justify-end' : 'justify-start'"><span class="h-4 w-4 rounded-full bg-white shadow"></span></button>
+                </div>
+                <div class="border-b py-4">
+                  <h3 class="mb-3 font-semibold">Size</h3>
+                  <label class="mb-3 flex items-center justify-between text-sm">Font size (px)<input type="number" min="12" max="24" :value="appearance.fontSize" @change="setFontSize($event.target.value)" class="w-20 rounded-lg border px-3 py-2" /></label>
+                  <label class="flex items-center justify-between text-sm">Line height (px)<input type="number" min="14" max="36" :value="appearance.lineHeight" @change="setLineHeight($event.target.value)" class="w-20 rounded-lg border px-3 py-2" /></label>
+                </div>
+              </div>
+            </template>
+            <template x-if="tab==='region'"><div class="space-y-5"><h2 class="font-bold text-[#0A2540]">Language &amp; Region</h2><label class="block text-sm">Location<select x-model="region.location" class="mt-2 block w-full p-3 border rounded-lg"><option>Kenya</option><option>United States</option></select></label><label class="block text-sm">Language<select x-model="region.language" class="mt-2 block w-full p-3 border rounded-lg"><option>English</option><option>Kiswahili</option></select></label><label class="flex gap-3 items-center"><input type="checkbox" x-model="region.predictiveText" /> Predictive text</label></div></template>
+            <div class="mt-8 border-t pt-5"><button @click="saveAll()" class="px-5 py-3 rounded-lg bg-blue-600 text-white font-semibold">Save changes</button></div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Offline banner -->
+  <div x-show="!online" class="offline-banner">Offline — the saved menu is available. Orders will sync when internet returns.</div>
+</div>
+
+<script src="/runtime-config.js"></script>
+<script type="module">
+async function startApp() {
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    try {
+      const registration = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+      await registration.update();
+      const pendingWorker = registration.installing || registration.waiting;
+      if (pendingWorker && pendingWorker.state !== 'activated') {
+        await new Promise(resolve => pendingWorker.addEventListener('statechange', () => {
+          if (pendingWorker.state === 'activated' || pendingWorker.state === 'redundant') resolve();
+        }));
+      }
+    } catch (updateError) {
+      console.warn('Could not refresh the offline cache:', updateError);
+    }
+  }
+  const [alpineModule] = await Promise.all([
+    import('https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/module.esm.js'),
+    import('/app.js?v=4')
+  ]);
+  window.Alpine = alpineModule.default;
+  window.Alpine.start();
+}
+
+startApp().catch(error => {
+  console.error('HOTELI POA could not start:', error);
+  const notice = document.createElement('div');
+  notice.setAttribute('role', 'alert');
+  notice.className = 'm-6 rounded-lg bg-red-50 p-4 text-red-800';
+  notice.textContent = 'The app could not connect. Check your internet connection and reload.';
+  document.body.prepend(notice);
+});
+</script>
 </body>
 </html>

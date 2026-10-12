@@ -43,6 +43,7 @@ function publishPos(event, data, tableId = null) {
   for (const [response, clientTableId] of liveClients) if (tableId && String(clientTableId) === String(tableId)) response.write(message);
 }
 const staticOrigins = [
+  'https://hoteli-pos-api.onrender.com',
   'https://hotel1-cf53.onrender.com',
   'https://hoteli-poa.co.ke',
   'https://www.hoteli-poa.co.ke',
@@ -732,7 +733,7 @@ if (process.env.USE_FIREBASE === 'true') console.warn('USE_FIREBASE is ignored; 
 await ensureDemoStaffAccounts();
 await ensureSuperAdmin();
 
-app.get('/admin', (_req, res) => res.sendFile(path.join(webRoot, 'admin/login.html')));
+app.get(['/admin', '/admin/', '/admin/login', '/admin/login/'], (_req, res) => res.redirect(308, '/admin/login.html'));
 app.get('/staff', (_req, res) => res.sendFile(path.join(webRoot, 'staff/login.html')));
 app.get('/employee', (_req, res) => res.redirect('/app/#pos'));
 app.get('/display', (_req, res) => res.sendFile(path.join(webRoot, 'display.html')));

@@ -11,7 +11,7 @@ This demo uses a local SQLite database and a Node.js API. GitHub stores the sour
 
 On startup the API applies `server/schema.sql`, opens the database at `DB_PATH` (default `./hoteli_poa.db`), and seeds the catalog from `menu.js` only when it is empty. An existing local `hoteli_poa.db` is used in place, preserving its `products` and `settings` rows. If a supplied database has a physical singular `product` table, its rows are imported into the canonical catalog while preserving their IDs. The `product` view is provided as a singular-name compatibility view on fresh databases.
 
-The home page opens directly to the customer menu. Customers can browse and place demo orders without creating an account. Staff sign-in is available from **Admin Login** and **Employee Login** in the top-right corner. Demo credentials: username `admin 1`, password `admin@1234`; username `employee 1`, password `emplo@1234`. These demo accounts are seeded at API startup; do not reuse these credentials for a public or production deployment.
+The home page opens directly to the customer food categories. Customers can browse without creating an account; sign-in is required to place an order. Customer sign-in and registration are available from the welcome section. Admin and employee sign-in are grouped in the top-right menu. `/admin` and `/admin/login.html` lead to the same admin sign-in form. Seeded staff credentials for local development: username `admin 1`, password `admin@1234`; username `employee 1`, password `emplo@1234`. These accounts are created at API startup; change or remove them before public use.
 
 The database file and SQLite journal files are ignored by Git. Do not commit or upload `hoteli_poa.db`; the repository contains the schema and menu seed, not your local records. New accounts are local to that database. New accounts start as customers. To grant staff access, create the account and run `npm run promote -- user@example.com manager` (or choose `waiter`, `cashier`, `supervisor`, or `admin`).
 
@@ -21,7 +21,7 @@ Sign in with **Admin Login**, then open **Products**. Add or edit a menu item wi
 
 ## Browser and phone app
 
-The customer site is a responsive Progressive Web App. On a deployed HTTPS URL, Chrome and supported Android browsers can install it from the **Install App** button or the browser menu. On iPhone/iPad, open the site in Safari, tap **Share**, then **Add to Home Screen**. This installs a home-screen web app; it is not a native Play Store or App Store package. Local development still opens at `http://localhost:3000`.
+The customer site is a responsive Progressive Web App that adapts its menu and order panel for phone screens. On Android Chrome, use the **Install App** button or the browser menu to install it in standalone app mode. On iPhone/iPad, open the site in Safari, tap **Share**, then **Add to Home Screen**. This installs a home-screen web app; it is not a native Play Store or App Store package. Local development still opens at `http://localhost:3000`.
 
 ### Offline use
 
@@ -50,3 +50,7 @@ When the frontend and API share the Express host, same-origin API calls work wit
 ## Firebase cleanup and exposed keys
 
 Firebase is disconnected from the running application. Firebase deployment configuration, rules, logs, archived environment files, and config modules have been removed; `firebase-backup/` retains source history only. Removing files from this checkout does not remove earlier Git commits. If any Firebase keys or secrets in the old configuration were real, rotate or revoke them in the Firebase console. No active credential values are stored in this repository.
+
+## Slideshow photo credits
+
+The four local food slideshow photos are free to use under the Unsplash License: Victoria Shes ([grilled meat and vegetables](https://unsplash.com/photos/grilled-meat-and-vegetable-on-the-table-UC0HZdUitWY)), Mehmet Keskin ([bowl of rice](https://unsplash.com/photos/a-bowl-of-rice-on-a-white-background-3zplOwmV6v0)), Greg Rosenke ([fruit juice](https://unsplash.com/photos/fruit-juice-IgGFNg-xPJs)), and Jarritos Mexican Soda ([food and drink](https://unsplash.com/photos/a-plate-of-food-and-a-bottle-of-juice-on-a-table-JSGeS-S6HLY)).

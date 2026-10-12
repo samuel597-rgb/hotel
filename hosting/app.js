@@ -140,6 +140,8 @@ window.rootApp = function () {
     staffLoginOpen: false, staffLoginPortal: 'admin', staffUsername: '', staffPassword: '', staffLoginError: '', staffLoginBusy: false,
     customerAuthOpen: false, customerAuthMode: 'login', customerName: '', customerPhone: '', customerEmail: '', customerPassword: '', customerAddress: '', customerLandmark:'', customerAuthError: '', customerAuthBusy: false,
     theme: 'light',
+    demoBannerVisible: localStorage.getItem('hp_demo_banner_dismissed') !== '1',
+    dismissDemoBanner() { localStorage.setItem('hp_demo_banner_dismissed', '1'); this.demoBannerVisible = false; },
     canInstall: false, installPrompt: null, online: navigator.onLine,
     get isManager() { return ['super_admin','manager','admin'].includes(this.role); },
     get navItems() {
@@ -191,6 +193,7 @@ window.rootApp = function () {
       window.addEventListener('online', () => { this.online = true; });
       window.addEventListener('offline', () => { this.online = false; });
       window.addEventListener('beforeinstallprompt', event => {
+        if (!/Android/i.test(navigator.userAgent)) return;
         event.preventDefault();
         this.installPrompt = event;
         this.canInstall = true;
@@ -256,7 +259,7 @@ window.rootApp = function () {
         if(this.customerAuthMode==='forgot') {
           const contact=this.customerEmail.trim();const payload=contact.includes('@')?{email:contact}:{phone:contact};
           const result=await fetch(`${String(window.POS_API_BASE_URL||'').replace(/\/$/,'')}/api/customer/forgot-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);return data;});
-          this.customerAuthError='In demo mode, password reset is not available. Contact front desk on WhatsApp 07XX...';return;
+          this.customerAuthError=result.message||'Password reset is not available here. Contact the front desk.';return;
         }
         const registering=this.customerAuthMode==='register';
         const result=await customerRequest(registering?'/api/customer/register':'/api/customer/login','POST',registering
@@ -363,7 +366,7 @@ window.posApp = function (root) {
     order: { table: '', tableId: null, channel: 'takeout', guests: 1, customer: '', customerPhone: '', address: '', landmark: '', riderNotes: '', notes: '', riderName: '', riderPhone: '', tip: 0, rating: 0, feedback: '' },
     tipPercent: 0, quote: { subtotal: 0, tax: 0, tip: 0, total: 0, lines: [] },
     showPay: false, showChannel: false, payMethod: 'cash', processing: false,
-    enabledPaymentMethods: ['cash', 'card', 'mpesa'],
+    enabledPaymentMethods: ['cash', 'card'],
     receiptSettings: { enabled: true, autoPrint: false },
 
     get categories() { return root.categories; },
@@ -386,7 +389,7 @@ window.posApp = function (root) {
       if (root.user) getDoc(doc(db, 'userSettings', root.user.uid)).then(snap => {
         const checkout = snap.exists() ? snap.data().checkout : null;
         const methods = checkout?.methods;
-        if (methods) this.enabledPaymentMethods = Object.keys(methods).filter(key => methods[key]);
+        if (methods) this.enabledPaymentMethods = Object.keys(methods).filter(key => methods[key] && ['cash','card'].includes(key));
         if (!this.enabledPaymentMethods.includes(this.payMethod)) this.payMethod = this.enabledPaymentMethods[0] || 'cash';
         if (checkout?.receipt && typeof checkout.receipt === 'object') this.receiptSettings = { ...this.receiptSettings, ...checkout.receipt };
         else if (checkout?.receipt === false) this.receiptSettings.enabled = false;
@@ -506,6 +509,8 @@ window.ordersApp = function (root) {
         if (this.selected) this.selected = this.orders.find(order => order.id === this.selected.id) || this.selected;
       }, error => toast(error.message, 'error'));
     },
+    progressIndex(status) { const value=String(status||'placed').toLowerCase();return value==='cancelled'?-1:value==='preparing'?1:['ready','out_for_delivery'].includes(value)?2:['delivered','paid'].includes(value)?3:0; },
+    estimate(channel,status) { const value=String(status||'placed').toLowerCase();if(value==='preparing')return '10–15 min';if(['ready','out_for_delivery'].includes(value))return value==='ready'?'Ready now':'On the way';if(['delivered','paid'].includes(value))return 'Served';return channel==='delivery'?'30–45 min':channel==='takeout'?'15–20 min':'20–30 min'; },
     async refreshCustomerOrders(){try{this.orders=(await customerRequest('/api/customer/orders')).map(order=>({...order,lines:order.items||[],paymentStatus:order.status==='paid'?'paid':'pending',createdAt:order.createdAt}));if(this.selected)this.selected=this.orders.find(order=>order.id===this.selected.id)||this.selected;}catch(error){console.warn('Customer orders unavailable:',error.message);}},
     async cancelCustomerOrder(order){if(!confirm('Cancel this order?'))return;try{const updated=await customerRequest(`/api/customer/orders/${encodeURIComponent(order.id)}/cancel`,'POST',{});Object.assign(order,updated);if(this.selected?.id===order.id)Object.assign(this.selected,updated);await this.refreshCustomerOrders();}catch(error){toast(error.message,'error');}},
     async refreshOverview() { this.overview=await backendRequest('/api/admin/overview','GET').catch(()=>this.overview); },
@@ -532,9 +537,6 @@ window.ordersApp = function (root) {
         if (this.selected?.id === o.id) Object.assign(this.selected, o);
         toast('Payment recorded as paid.', 'success');
       } catch (error) { toast(error.message, 'error'); }
-    },
-    async promptMpesa(o) {
-      toast('M-Pesa payments are disabled in the free SQLite demo.', 'info');
     },
     async splitLine(order,line) {
       const lines=order.lines||order.items||[];if(lines.length<2)return toast('A split needs at least two order lines.','error');
@@ -781,16 +783,16 @@ window.dashApp = function (root) {
       }
       const revEl = document.getElementById('revChart');
       if (revEl) {
-        const methods = ['cash','card','mpesa'];
+        const methods = ['cash','card'];
         const totals = methods.map(method => paidOrders.filter(o=>o.paymentMethod===method).reduce((sum,o)=>sum+(o.total||0),0));
         Chart.getChart(revEl)?.destroy();
         new Chart(revEl, {
         type: 'doughnut',
         data: {
-          labels: ['Cash','Bank card','M-Pesa'],
+          labels: ['Cash','Bank card'],
           datasets: [{
             data: totals,
-            backgroundColor: ['#0A2540','#1E6FD9','#7FB2F0'],
+            backgroundColor: ['#0A2540','#1E6FD9'],
             borderWidth: 0
           }]
         },
@@ -943,7 +945,7 @@ window.settingsApp = function (root) {
       'New inventory': { push: false, email: true }
     },
     appearance: { theme: 'light', fontSize: 16, lineHeight: 22 },
-    checkout: { paymentHistory: true, miniStatement: true, receipt: { enabled: true, autoPrint: false }, methods: { cash: true, card: true, mpesa: true } },
+    checkout: { paymentHistory: true, miniStatement: true, receipt: { enabled: true, autoPrint: false }, methods: { cash: true, card: true } },
     region: { location: 'Kenya', language: 'English', predictiveText: true },
     settings: { hotelName: "HOTELI POA", currency: 'KES', taxRate: 16, taxMode: 'included', loyaltyThreshold:10,deliveryFeeCents:0,serviceAreaText:'Nairobi and environs (demo)',receiptFooterText:'Thank you for dining with us.' },
     profile: { firstName: '', lastName: '', phone: '', dob: '', location: '' },

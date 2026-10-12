@@ -86,7 +86,7 @@ export async function ensureSuperAdmin() {
   console.warn('Super admin created: phone=0700000000, pin=0000. Change the password after first login.');
 }
 
-router.post('/customer/register', authRateLimit, async (req, res, next) => {
+router.post(['/customer/register', '/api/customer/register'], authRateLimit, async (req, res, next) => {
   try {
     const name = safeText(req.body?.name).replace(/\s+/g, ' ').slice(0, 120);
     const phone = normalizePhone(req.body?.phone);
@@ -115,36 +115,50 @@ router.post('/customer/register', authRateLimit, async (req, res, next) => {
   } catch (error) { return next(error); }
 });
 
-router.post('/customer/login', authRateLimit, async (req, res, next) => {
+router.post(['/customer/login', '/api/customer/login'], authRateLimit, async (req, res, next) => {
+  const trace = '[customer-login]';
   try {
     const phone = normalizePhone(req.body?.phone || req.body?.username);
+    console.info(trace, 'request received', { hasPhone: Boolean(phone), hasPassword: Boolean(req.body?.password) });
+    const sessionsTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_sessions'").get();
+    if (!sessionsTable) {
+      console.error(trace, 'customer_sessions table is missing; check schema initialization / Render SQLite file');
+      return res.status(500).json({ error: 'Customer sessions are unavailable. Please contact the front desk.' });
+    }
+    console.info(trace, 'customer_sessions table ready');
     const customer = db.prepare('SELECT * FROM customers WHERE phone=? AND active=1').get(phone);
     if (!customer || !(await verifyPassword(req.body?.password, customer.password_hash, customer.salt))) {
+      console.info(trace, 'credentials rejected');
       return res.status(401).json({ error: 'Phone number or password is incorrect.' });
     }
+    console.info(trace, 'customer verified');
     const token = crypto.randomBytes(24).toString('hex');
     withTransaction(()=>{
       db.prepare('INSERT INTO customer_sessions(token_hash,customer_id,expires_at) VALUES(?,?,?)').run(tokenDigest(token), customer.id, Date.now() + 30 * 24 * 60 * 60 * 1000);
       db.prepare('UPDATE customers SET last_seen=? WHERE id=?').run(Date.now(),customer.id);
       logAction(db, { actorId: customer.id, actorRole: 'customer', action: 'login', targetType: 'customer', targetId: customer.id });
     });
+    console.info(trace, 'session created');
     return res.json({ token, user: { id: customer.id, name: customer.name, phone: customer.phone, email: customer.email, address: customer.address, landmark: customer.landmark, role: 'customer' } });
-  } catch (error) { return next(error); }
+  } catch (error) {
+    console.error('[customer-login] failed', { code: error?.code || 'UNKNOWN', message: error?.message || String(error) });
+    return next(error);
+  }
 });
 
-router.post('/customer/forgot-password', authRateLimit, (req, res) => {
+router.post(['/customer/forgot-password', '/api/customer/forgot-password'], authRateLimit, (req, res) => {
   const phone=normalizePhone(req.body?.phone);
   const email = safeText(req.body?.email).toLowerCase();
   if (!emailPattern.test(email)&&phone.replace(/\D/g,'').length<7) return res.status(400).json({ error: 'Enter a valid phone number or email address.' });
-  return res.json({ sent: false, reason: 'demo', message: 'In demo mode, password reset is not available. Contact front desk on WhatsApp 07XX...' });
+  return res.json({ sent: false, reason: 'demo', message: 'Password reset is not available here. Contact the front desk on WhatsApp 07XX...' });
 });
 
-router.get('/customer/me', requireCustomer, (req, res) => {
+router.get(['/customer/me', '/api/customer/me'], requireCustomer, (req, res) => {
   const { id, name, phone, email, address, landmark } = req.customer;
   return res.json({ user: { id, name, phone, email, address, landmark, role: 'customer' } });
 });
 
-router.post('/customer/logout', requireCustomer, (req, res) => {
+router.post(['/customer/logout', '/api/customer/logout'], requireCustomer, (req, res) => {
   const token = getToken(req);
   withTransaction(()=>{
     db.prepare('DELETE FROM customer_sessions WHERE token_hash=?').run(tokenDigest(token));

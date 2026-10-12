@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const hosting = path.join(root, 'hosting');
 const files = [
-  ['auth.html', 'auth.html'], ['auth.html', 'index.html'],
+  ['auth.html', 'auth.html'],
   ['auth.js', 'auth.js'],
   ['db-service.js', 'db-service.js'], ['local-api.js', 'local-api.js'],
   ['local-auth.js', 'local-auth.js'], ['local-data.js', 'local-data.js'],
@@ -23,6 +23,7 @@ for (const folder of ['shared','staff','admin']) {
 fs.copyFileSync(path.join(root, 'display.html'), path.join(hosting, 'display.html'));
 for (const [source, target] of files) fs.copyFileSync(path.join(root, source), path.join(hosting, target));
 fs.cpSync(path.join(root, 'app'), path.join(hosting, 'app'), { recursive: true });
+fs.copyFileSync(path.join(root, 'app', 'index.html'), path.join(hosting, 'index.html'));
 fs.mkdirSync(path.join(hosting, 'icons'), { recursive: true });
 fs.cpSync(path.join(root, 'public', 'food'), path.join(hosting, 'food'), { recursive: true });
 for (const icon of ['logo-180.png', 'logo-192.png', 'logo-512.png']) {
