@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1e6fd9"><title>Staff Portal · HOTELI POA</title>
+  <link rel="stylesheet" href="/shared/theme.css"><link rel="stylesheet" href="/portal/portal.css">
+  <script src="/shared/theme.js" defer></script><script src="/shared/password-toggle.js" defer></script><script src="/portal/portal.js" defer></script>
+</head>
+<body><main class="portal-shell"><form id="portal-login" class="portal-card" autocomplete="off">
+  <div class="portal-brand"><img src="/icons/logo-192.png" alt=""><strong>HOTELI POA</strong></div>
+  <h1>Staff Portal</h1><p class="portal-muted">Sign in with your phone number or username and PIN.</p>
+  <label>Phone number or username<input name="username" required autocomplete="username" inputmode="text" placeholder="Phone number or username"></label>
+  <label>PIN / password<div class="portal-password"><input id="portal-password" name="password" required type="password" autocomplete="current-password" placeholder="PIN / password"><button type="button" data-password-toggle="portal-password" aria-label="Show password" aria-pressed="false">Show</button></div></label>
+  <p id="portal-error" class="portal-error" role="alert"></p><button class="portal-submit" type="submit">Sign in</button>
+  <p class="portal-muted portal-foot">Forgot PIN? Contact your administrator.</p>
+  <p class="portal-muted portal-foot">Not staff? <a href="/?customer_login=1">Go to customer sign in</a>.</p>
+</form></main></body></html>

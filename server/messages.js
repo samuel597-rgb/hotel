@@ -33,7 +33,7 @@ router.post('/api/customer/messages', requireCustomer, (req,res) => {
   withTransaction(() => {
     db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)')
       .run(id,req.customer.id,'customer',req.customer.id,req.customer.name,body);
-    logAction(db,{actorId:req.customer.id,actorRole:'customer',action:'message_send',targetType:'customer_message',targetId:id});
+    logAction(db,{actorId:req.customer.id,actorRole:'customer',action:'message.send',targetType:'customer_message',targetId:id});
   });
   const message={id,senderType:'customer',senderId:req.customer.id,senderName:req.customer.name,body,createdAt:new Date().toISOString()};
   publish(`customer:${req.customer.id}`,'message',{scope:`customer:${req.customer.id}`,message});
@@ -74,8 +74,8 @@ router.post('/api/staff/messages', requireStaff, requireRole(staffRoles), (req,r
       db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)')
         .run(id,threadId,req.staff.role==='admin'||req.staff.role==='super_admin'?'admin':'staff',String(req.staff.id),req.staff.name,body);
       db.prepare('UPDATE customer_messages SET read_by_staff=1 WHERE customer_id=?').run(threadId);
+      logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'message.send',targetType:'customer_message',targetId:id});
     });
-    logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'message_send',targetType:'customer_message',targetId:id});
     const message={id,senderType:'staff',senderId:String(req.staff.id),senderName:req.staff.name,body,createdAt:new Date().toISOString()};
     publish(`customer:${threadId}`,'message',{scope:`customer:${threadId}`,message});
   publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
@@ -87,7 +87,7 @@ router.post('/api/staff/messages', requireStaff, requireRole(staffRoles), (req,r
   withTransaction(() => {
     db.prepare(`INSERT INTO staff_messages(id,thread_type,thread_id,sender_id,sender_role,body)
       VALUES(?,?,?,?,?,?)`).run(id,threadType,threadId,String(req.staff.id),req.staff.role,body);
-    logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'message_send',targetType:'staff_message',targetId:id});
+    logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'message.send',targetType:'staff_message',targetId:id});
   });
   const message={id,senderId:String(req.staff.id),senderRole:req.staff.role,senderName:req.staff.name,body,createdAt:new Date().toISOString()};
   if(threadType==='thread')publish(`thread:${threadId}`,'message',{scope:`thread:${threadId}`,message});
@@ -119,7 +119,7 @@ router.post('/api/messages/customer', (req,res,next) => {
   if(actor.type==='customer'){
     const body=clean(req.body?.body);if(!body)return res.status(400).json({error:'Message cannot be empty.'});
     const id=crypto.randomUUID(),customer=actor.customer;
-    withTransaction(()=>db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)').run(id,customer.id,'customer',customer.id,customer.name,body));
+    withTransaction(()=>{db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)').run(id,customer.id,'customer',customer.id,customer.name,body);logAction(db,{actorId:customer.id,actorRole:'customer',action:'message.send',targetType:'customer_message',targetId:id});});
     const message={id,senderType:'customer',senderId:customer.id,senderName:customer.name,body,createdAt:new Date().toISOString()};publish(`customer:${customer.id}`,'message',{scope:`customer:${customer.id}`,message});publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
     return res.status(201).json(message);
   }
@@ -130,8 +130,8 @@ router.post('/api/messages/customer', (req,res,next) => {
     if(!body)return res.status(400).json({error:'Message cannot be empty.'});
     if(!db.prepare('SELECT id FROM customers WHERE id=? AND active=1').get(customerId))return res.status(404).json({error:'Customer not found.'});
     const id=crypto.randomUUID();
-    withTransaction(()=>db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)')
-      .run(id,customerId,staff.role==='admin'||staff.role==='super_admin'?'admin':'staff',String(staff.id),staff.name,body));
+    withTransaction(()=>{db.prepare('INSERT INTO customer_messages(id,customer_id,sender_type,sender_id,sender_name,body) VALUES(?,?,?,?,?,?)')
+      .run(id,customerId,staff.role==='admin'||staff.role==='super_admin'?'admin':'staff',String(staff.id),staff.name,body);logAction(db,{actorId:String(staff.id),actorRole:staff.role,action:'message.send',targetType:'customer_message',targetId:id});});
     const message={id,senderType:'staff',senderId:String(staff.id),senderName:staff.name,body,createdAt:new Date().toISOString()};
     publish(`customer:${customerId}`,'message',{scope:`customer:${customerId}`,message});
     publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
@@ -181,7 +181,7 @@ router.post('/api/messages/threads/:id',(req,res,next)=>requireStaff(req,res,()=
   const thread=db.prepare('SELECT * FROM staff_threads WHERE id=?').get(Number(req.params.id));if(!thread)return res.status(404).json({error:'Thread not found.'});
   const body=clean(req.body?.body);if(!body)return res.status(400).json({error:'Message cannot be empty.'});
   if(req.staff.role==='kitchen'&&thread.thread_type!=='kitchen')return res.status(403).json({error:'Kitchen staff can only post to kitchen threads.'});
-  const id=crypto.randomUUID();withTransaction(()=>db.prepare('INSERT INTO staff_messages(id,thread_type,thread_id,sender_id,sender_role,body) VALUES(?,?,?,?,?,?)').run(id,thread.thread_type,String(thread.id),String(req.staff.id),req.staff.role,body));
+  const id=crypto.randomUUID();withTransaction(()=>{db.prepare('INSERT INTO staff_messages(id,thread_type,thread_id,sender_id,sender_role,body) VALUES(?,?,?,?,?,?)').run(id,thread.thread_type,String(thread.id),String(req.staff.id),req.staff.role,body);logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'message.send',targetType:'staff_message',targetId:id,meta:{threadType:thread.thread_type,threadId:thread.id}});});
   const message={id,senderId:String(req.staff.id),senderRole:req.staff.role,senderName:req.staff.name,body,createdAt:new Date().toISOString()};publish(`thread:${thread.id}`,'message',{scope:`thread:${thread.id}`,message});publish('admin','message',{scope:'admin',message});publish('presence','inbox.update',{scope:'presence'});
   return res.status(201).json(message);
 })));
@@ -197,7 +197,7 @@ router.post('/api/messages/broadcast',requireStaff,requireRole(['super_admin','a
     if(!thread)thread={id:Number(db.prepare("INSERT INTO staff_threads(thread_type,title,created_by) VALUES('admin_broadcast','Admin broadcasts',?)").run(String(req.staff.id)).lastInsertRowid)};
     const insert=db.prepare('INSERT INTO staff_messages(id,thread_type,thread_id,sender_id,sender_role,recipient_role,body) VALUES(?,?,?,?,?,?,?)');
     const messages=roles.map(role=>{const id=crypto.randomUUID();insert.run(id,'admin_broadcast',String(thread.id),String(req.staff.id),req.staff.role,role,body);return {id,role};});
-    logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'message.broadcast',targetType:'staff_thread',targetId:thread.id,meta:{roles}});
+    logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'message.send',targetType:'staff_thread',targetId:thread.id,meta:{roles}});
     return messages;
   });
   for(const item of results)publish(`role:${item.role}`,'message',{scope:`role:${item.role}`,message:{...item,body,senderName:req.staff.name}});

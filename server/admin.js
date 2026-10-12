@@ -46,7 +46,7 @@ router.post('/api/admin/staff',requireStaff,requireRole(managers),async(req,res,
       id=withTransaction(()=>{
         const result=db.prepare('INSERT INTO staff(name,phone,role,pin_hash,active,force_password_change) VALUES(?,?,?,?,1,1)')
           .run(name,phone,role,hash);
-        logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'staff_create',targetType:'staff',targetId:result.lastInsertRowid,meta:{role}});
+        logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'staff.create',targetType:'staff',targetId:result.lastInsertRowid,meta:{role}});
         return Number(result.lastInsertRowid);
       });
     } catch(error) {
@@ -76,7 +76,9 @@ router.patch('/api/admin/staff/:id',requireStaff,requireRole(managers),async(req
         force_password_change=CASE WHEN ? IS NULL THEN force_password_change ELSE 1 END,
         pin_hash=COALESCE(?,pin_hash) WHERE id=?`).run(name,phone,role,active,hash,hash,member.id);
       if(!active)db.prepare('DELETE FROM staff_sessions WHERE staff_id=?').run(member.id);
-      logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'staff_edit',targetType:'staff',targetId:member.id,meta:{role,active:Boolean(active)}});
+      logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'staff.update',targetType:'staff',targetId:member.id,meta:{role,active:Boolean(active)}});
+      if(role!==member.role)logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'staff.role_change',targetType:'staff',targetId:member.id,meta:{from:member.role,to:role}});
+      if(Boolean(active)!==Boolean(member.active))logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:active?'staff.activate':'staff.deactivate',targetType:'staff',targetId:member.id});
     });
     return res.json(db.prepare(`SELECT id,name,phone,role,active,force_password_change AS forcePasswordChange FROM staff WHERE id=?`).get(member.id));
   } catch(error){if(String(error.code).startsWith('SQLITE_CONSTRAINT')||/UNIQUE constraint failed: staff\.phone/i.test(String(error.message)))return res.status(409).json({error:'A staff member already uses that phone number.'});return next(error);}
@@ -90,7 +92,7 @@ router.delete('/api/admin/staff/:id',requireStaff,requireRole(managers), (req,re
   withTransaction(()=>{
     db.prepare('UPDATE staff SET active=0 WHERE id=?').run(member.id);
     db.prepare('DELETE FROM staff_sessions WHERE staff_id=?').run(member.id);
-    logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'staff_deactivate',targetType:'staff',targetId:member.id});
+    if(member.active)logAction(db,{actorId:String(req.staff.id),actorRole:req.staff.role,action:'staff.deactivate',targetType:'staff',targetId:member.id});
   });
   return res.status(204).end();
 });

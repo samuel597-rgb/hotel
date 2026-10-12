@@ -4,5 +4,5 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(!overlay){overlay=document.createElement('button');overlay.type='button';overlay.className='mobile-drawer-overlay';overlay.dataset.mobileDrawerOverlay='';overlay.setAttribute('aria-label','Close navigation menu');document.body.append(overlay);}
   const close=()=>{drawer.classList.remove('is-open');overlay.classList.remove('is-open');document.body.classList.remove('drawer-open');};
   document.querySelectorAll('[data-drawer-toggle]').forEach(button=>button.addEventListener('click',()=>{const opened=drawer.classList.toggle('is-open');overlay.classList.toggle('is-open',opened);document.body.classList.toggle('drawer-open',opened);button.setAttribute('aria-expanded',String(opened));}));
-  overlay.addEventListener('click',close);drawer.querySelectorAll('a').forEach(link=>link.addEventListener('click',close));
+  overlay.addEventListener('click',close);drawer.addEventListener('click',event=>{if(event.target.closest('a'))close();});
 });

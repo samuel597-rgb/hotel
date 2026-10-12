@@ -16,7 +16,7 @@ const files = [
 ];
 
 fs.mkdirSync(path.join(hosting, 'app'), { recursive: true });
-for (const folder of ['shared','staff','admin']) {
+for (const folder of ['shared','staff','admin','portal']) {
   fs.mkdirSync(path.join(hosting, folder), { recursive: true });
   fs.cpSync(path.join(root, folder), path.join(hosting, folder), { recursive: true });
 }

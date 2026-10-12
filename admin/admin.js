@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     try{const response=await fetch('/staff/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(form)))});const result=await response.json();if(!response.ok)throw new Error(result.error);if(!['admin','super_admin','manager'].includes(result.role)){error.textContent='This account does not have admin access.';return;}localStorage.setItem('hp_admin_token',result.token);location.href='/admin/dashboard.html';}
     catch(error){error.textContent=error.message;}
   });
-  if(!location.pathname.endsWith('dashboard.html'))return;
+  if(!location.pathname.startsWith('/admin/'))return;
   if(!adminToken())location.replace('/admin');
   HPApi.request('/staff/me').then(({user})=>{const names={super_admin:'Administrator',admin:'Administrator',manager:'Manager',front_desk:'Front Desk',kitchen:'Kitchen',employee:'Waiter/Employee',waiter:'Waiter/Employee',cashier:'Cashier',supervisor:'Supervisor'};document.querySelector('#user-badge').textContent=`${user.name} · ${user.display_role||names[user.role]||'Staff'}`;}).catch(()=>{});
   document.querySelector('#logout')?.addEventListener('click',async()=>{try{await HPApi.request('/staff/logout',{method:'POST'});}catch{}localStorage.removeItem('hp_admin_token');sessionStorage.removeItem('hp_admin_token');location.replace('/admin');});
@@ -35,6 +35,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   }
   const alertToggle=document.querySelector('#order-alerts');if(alertToggle){alertToggle.checked=localStorage.getItem('hp_order_alerts')==='1';alertToggle.addEventListener('change',()=>localStorage.setItem('hp_order_alerts',alertToggle.checked?'1':'0'));}
   document.querySelector('#refresh-orders')?.addEventListener('click',load);
+  const sectionTarget=location.pathname.endsWith('/staff.html')?'staff':location.pathname.endsWith('/audit.html')?'audit':location.hash.slice(1);
+  if(sectionTarget)setTimeout(()=>document.getElementById(sectionTarget)?.scrollIntoView({block:'start'}),0);
   let flashing=false,flashTimer=null;function flashTitle(){if(!alertToggle?.checked)return;const original='Admin workspace · HOTELI POA';clearInterval(flashTimer);flashTimer=setInterval(()=>{flashing=!flashing;document.title=flashing?'New order · HOTELI POA':original;},700);setTimeout(()=>{clearInterval(flashTimer);document.title=original;},6000);}
   const token=adminToken();let fallback=setInterval(load,5000);if(token&&'EventSource'in window){const stream=new EventSource(`/api/stream?token=${encodeURIComponent(token)}&scope=admin`);stream.addEventListener('order.new',()=>{load();flashTitle();});stream.addEventListener('order.status',load);stream.onerror=()=>{stream.close();if(!fallback)fallback=setInterval(load,5000);};}
   load();

@@ -56,7 +56,7 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  if (['/login','/admin','/staff','/employee','/display'].includes(url.pathname)
+  if (['/login','/portal','/api/staff/login','/admin','/staff','/employee','/display'].includes(url.pathname)
       || url.pathname.startsWith('/admin/') || url.pathname.startsWith('/staff/')) return;
 
   // Authentication, order, and private API responses are never cached.

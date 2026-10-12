@@ -134,7 +134,7 @@ router.post('/api/customer/orders', requireCustomer, (req, res) => {
     if (channel === 'delivery') db.prepare(`INSERT INTO delivery_details(order_id,address_text,landmark,notes) VALUES(?,?,?,?)`)
       .run(orderId, address, landmark, text(body.riderNotes, 500));
     if (tableId) db.prepare("UPDATE tables SET status='occupied' WHERE id=?").run(tableId);
-    logAction(db, { actorId: req.customer.id, actorRole: 'customer', action: 'order_create', targetType: 'order', targetId: id, meta: { channel, itemCount: lines.length, totalCents } });
+    logAction(db, { actorId: req.customer.id, actorRole: 'customer', action: 'order.create', targetType: 'order', targetId: id, meta: { channel, itemCount: lines.length, totalCents } });
     return db.prepare('SELECT * FROM orders WHERE id=?').get(orderId);
   });
   publish('presence','order.new',{order:orderDetails(order)});publish('kitchen','order.new',{order:orderDetails(order)});publish('admin','order.new',{order:orderDetails(order)});

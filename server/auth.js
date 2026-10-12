@@ -109,7 +109,7 @@ router.post(['/customer/register', '/api/customer/register'], authRateLimit, asy
         db.prepare('INSERT INTO customers(id,name,phone,email,password_hash,salt,address,landmark) VALUES(?,?,?,?,?,?,?,?)')
           .run(id, name, phone, email, hash.hash, hash.salt, address, landmark);
         db.prepare('INSERT INTO customer_sessions(token_hash,customer_id,expires_at) VALUES(?,?,?)').run(tokenDigest(token), id, Date.now() + 30 * 24 * 60 * 60 * 1000);
-        logAction(db, { actorId: id, actorRole: 'customer', action: 'register', targetType: 'customer', targetId: id });
+        logAction(db, { actorId: id, actorRole: 'customer', action: 'customer.create', targetType: 'customer', targetId: id });
       });
     } catch (error) {
       if (String(error.code).startsWith('SQLITE_CONSTRAINT') || /UNIQUE constraint failed: customers\.(phone|email)/i.test(String(error.message))) return res.status(409).json({ error: 'That phone number or email is already registered.' });
@@ -133,6 +133,7 @@ router.post(['/customer/login', '/api/customer/login'], authRateLimit, async (re
     const customer = db.prepare('SELECT * FROM customers WHERE phone=? AND active=1').get(phone);
     if (!customer || !(await verifyPassword(req.body?.password, customer.password_hash, customer.salt))) {
       console.info(trace, 'credentials rejected');
+      withTransaction(()=>logAction(db,{actorId:customer?.id||null,actorRole:'customer',action:'auth.login_failed',targetType:'customer',targetId:customer?.id||phone}));
       return res.status(401).json({ error: 'Phone number or password is incorrect.' });
     }
     console.info(trace, 'customer verified');
@@ -140,7 +141,7 @@ router.post(['/customer/login', '/api/customer/login'], authRateLimit, async (re
     withTransaction(()=>{
       db.prepare('INSERT INTO customer_sessions(token_hash,customer_id,expires_at) VALUES(?,?,?)').run(tokenDigest(token), customer.id, Date.now() + 30 * 24 * 60 * 60 * 1000);
       db.prepare('UPDATE customers SET last_seen=? WHERE id=?').run(Date.now(),customer.id);
-      logAction(db, { actorId: customer.id, actorRole: 'customer', action: 'login', targetType: 'customer', targetId: customer.id });
+      logAction(db, { actorId: customer.id, actorRole: 'customer', action: 'auth.login', targetType: 'customer', targetId: customer.id });
     });
     console.info(trace, 'session created');
     return res.json({ token, user: { id: customer.id, name: customer.name, phone: customer.phone, email: customerEmail(customer.email), address: customer.address, landmark: customer.landmark, role: 'customer' } });
@@ -166,12 +167,12 @@ router.post(['/customer/logout', '/api/customer/logout'], requireCustomer, (req,
   const token = getToken(req);
   withTransaction(()=>{
     db.prepare('DELETE FROM customer_sessions WHERE token_hash=?').run(tokenDigest(token));
-    logAction(db, { actorId: req.customer.id, actorRole: 'customer', action: 'logout', targetType: 'customer', targetId: req.customer.id });
+    logAction(db, { actorId: req.customer.id, actorRole: 'customer', action: 'auth.logout', targetType: 'customer', targetId: req.customer.id });
   });
   return res.status(204).end();
 });
 
-router.post('/staff/login', authRateLimit, async (req, res, next) => {
+router.post(['/staff/login','/api/staff/login'], authRateLimit, async (req, res, next) => {
   let auditStaff = null;
   try {
     const identifier = safeText(req.body?.phone || req.body?.username || req.body?.name).toLowerCase();
@@ -189,16 +190,17 @@ router.post('/staff/login', authRateLimit, async (req, res, next) => {
     }
     auditStaff = staff;
     if (!staff || !valid) {
-      withTransaction(()=>logAction(db,{actorId:staff?String(staff.id):null,actorRole:staff?.role||'anonymous',action:'staff.login.failure',targetType:'staff',targetId:staff?.id||identifier}));
+      withTransaction(()=>logAction(db,{actorId:staff?String(staff.id):null,actorRole:staff?.role||'anonymous',action:'auth.login_failed',targetType:'staff',targetId:staff?.id||identifier}));
       return res.status(401).json({ error: 'Username, phone, or password is incorrect.' });
     }
     const token = crypto.randomBytes(24).toString('hex');
     withTransaction(()=>{
       db.prepare('INSERT INTO staff_sessions(token_hash,staff_id,expires_at) VALUES(?,?,?)').run(tokenDigest(token), staff.id, Date.now() + 12 * 60 * 60 * 1000);
-      logAction(db, { actorId: String(staff.id), actorRole: staff.role, action: 'staff.login', targetType: 'staff', targetId: staff.id });
+      logAction(db, { actorId: String(staff.id), actorRole: staff.role, action: 'auth.login', targetType: 'staff', targetId: staff.id });
     });
     const displayRoles={super_admin:'Administrator',admin:'Administrator',manager:'Manager',front_desk:'Front Desk',kitchen:'Kitchen',employee:'Waiter/Employee',waiter:'Waiter/Employee',cashier:'Cashier',supervisor:'Supervisor'};
-    return res.json({ token, role: staff.role, forcePasswordChange: Boolean(staff.force_password_change), user: { id: staff.id, name: staff.name, phone: staff.phone, role: staff.role, display_role:displayRoles[staff.role]||'Staff' } });
+    const display_role=displayRoles[staff.role]||'Staff',landing=({super_admin:'/admin/dashboard.html',admin:'/admin/dashboard.html',manager:'/admin/dashboard.html',front_desk:'/staff/dashboard.html',kitchen:'/staff/kds.html',employee:'/staff/dashboard.html',waiter:'/staff/dashboard.html',cashier:'/staff/dashboard.html',supervisor:'/staff/dashboard.html'})[staff.role]||'/staff/dashboard.html';
+    return res.json({ token, role: staff.role, display_role, landing, forcePasswordChange: Boolean(staff.force_password_change), user: { id: staff.id, name: staff.name, phone: staff.phone, role: staff.role, display_role } });
   } catch (error) { console.error('[staff-login] failed', { code:error?.code||'UNKNOWN', message:error?.message||String(error), staffId:auditStaff?.id||null }); return next(error); }
 });
 
@@ -207,12 +209,13 @@ router.post('/staff/logout', requireStaff, (req, res) => {
   withTransaction(()=>{
     db.prepare('DELETE FROM staff_sessions WHERE token_hash=?').run(tokenDigest(token));
     if (req.legacyStaffSession) deleteSession(token);
-    logAction(db, { actorId: String(req.staff.id), actorRole: req.staff.role, action: 'logout', targetType: 'staff', targetId: req.staff.id });
+    logAction(db, { actorId: String(req.staff.id), actorRole: req.staff.role, action: 'auth.logout', targetType: 'staff', targetId: req.staff.id });
   });
   return res.status(204).end();
 });
 
 router.get('/staff/me', requireStaff, (req, res) => res.json({
+  landing:({super_admin:'/admin/dashboard.html',admin:'/admin/dashboard.html',manager:'/admin/dashboard.html',front_desk:'/staff/dashboard.html',kitchen:'/staff/kds.html',employee:'/staff/dashboard.html',waiter:'/staff/dashboard.html',cashier:'/staff/dashboard.html',supervisor:'/staff/dashboard.html'})[req.staff.role]||'/staff/dashboard.html',
   user: { id: req.staff.id, name: req.staff.name, phone: req.staff.phone, role: req.staff.role, display_role:({super_admin:'Administrator',admin:'Administrator',manager:'Manager',front_desk:'Front Desk',kitchen:'Kitchen',employee:'Waiter/Employee',waiter:'Waiter/Employee',cashier:'Cashier',supervisor:'Supervisor'})[req.staff.role]||'Staff' },
   forcePasswordChange: Boolean(req.staff.force_password_change)
 }));

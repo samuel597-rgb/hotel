@@ -441,10 +441,14 @@ app.post('/api/products', requireAuth, allowRoles('manager','admin'), productUpl
   const discount = Math.max(0,Math.min(100,Number(req.body?.discount_percent)||0));
   if (!name || !Number.isFinite(price) || price < 0 || !category) return jsonResponse(res, 400, { error: 'Name, category, and a non-negative price are required.' });
   const imagePath = req.file ? `/uploads/${req.file.filename}` : '';
-  const info = db.prepare(`INSERT INTO products(name,price,price_cents,category,category_id,sub_category,description,discount_percent,image_path,image_url,is_available,active)
-    VALUES(?,?,?,?,?,?,?,?,?,?,1,1)`).run(name, price,priceCents, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
-    String(req.body?.description || '').slice(0, 2000), discount, imagePath || null, imagePath);
-  db.prepare('UPDATE categories SET active=1 WHERE id=?').run(category.id);
+  const info = withTransaction(()=>{
+    const result=db.prepare(`INSERT INTO products(name,price,price_cents,category,category_id,sub_category,description,discount_percent,image_path,image_url,is_available,active)
+      VALUES(?,?,?,?,?,?,?,?,?,?,1,1)`).run(name, price,priceCents, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
+      String(req.body?.description || '').slice(0, 2000), discount, imagePath || null, imagePath);
+    db.prepare('UPDATE categories SET active=1 WHERE id=?').run(category.id);
+    logAction(db,{actorId:req.user.id,actorRole:req.user.role,action:'product.create',targetType:'product',targetId:result.lastInsertRowid});
+    return result;
+  });
   return respondProduct(res, db.prepare('SELECT * FROM products WHERE id=?').get(info.lastInsertRowid), 201);
 });
 app.put('/api/products/:id', requireAuth, allowRoles('manager','admin'), productUpload.single('image'), (req, res) => {
@@ -460,19 +464,25 @@ app.put('/api/products/:id', requireAuth, allowRoles('manager','admin'), product
   if (!name || !Number.isFinite(price) || price < 0 || !category) return jsonResponse(res, 400, { error: 'Name, category, and a non-negative price are required.' });
   const imagePath = req.file ? `/uploads/${req.file.filename}` : (String(req.body?.removeImage)==='true' ? '' : (existing.image_path || ''));
   if (req.file || String(req.body?.removeImage)==='true') removeProductUpload(existing.image_path);
-  db.prepare(`UPDATE products SET name=?,price=?,price_cents=?,category=?,category_id=?,sub_category=?,description=?,discount_percent=?,image_path=?,image_url=?,active=1,is_available=1 WHERE id=?`)
-    .run(name, price,priceCents, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
-      String(req.body?.description ?? existing.description ?? '').slice(0, 2000), discount, imagePath || null, imagePath, existing.id);
-  db.prepare('UPDATE categories SET active=1 WHERE id=?').run(category.id);
+  withTransaction(()=>{
+    db.prepare(`UPDATE products SET name=?,price=?,price_cents=?,category=?,category_id=?,sub_category=?,description=?,discount_percent=?,image_path=?,image_url=?,active=1,is_available=1 WHERE id=?`)
+      .run(name, price,priceCents, category.name.toLowerCase() === 'drinks' ? 'drinks' : 'food', category.id, category.name,
+        String(req.body?.description ?? existing.description ?? '').slice(0, 2000), discount, imagePath || null, imagePath, existing.id);
+    db.prepare('UPDATE categories SET active=1 WHERE id=?').run(category.id);
+    logAction(db,{actorId:req.user.id,actorRole:req.user.role,action:'product.update',targetType:'product',targetId:existing.id});
+  });
   return respondProduct(res, db.prepare('SELECT * FROM products WHERE id=?').get(existing.id));
 });
 app.delete('/api/products/:id', requireAuth, allowRoles('manager','admin'), (req, res) => {
   const product = productRowById(req.params.id);
   if (!product) return jsonResponse(res, 404, { error: 'Product not found.' });
-  db.prepare('UPDATE products SET active=0,is_available=0 WHERE id=?').run(product.id);
-  if (product.category_id) db.prepare(`UPDATE categories SET active=0 WHERE id=? AND NOT EXISTS (
-    SELECT 1 FROM products WHERE category_id=? AND active=1 AND is_available=1
-  )`).run(product.category_id, product.category_id);
+  withTransaction(()=>{
+    db.prepare('UPDATE products SET active=0,is_available=0 WHERE id=?').run(product.id);
+    if (product.category_id) db.prepare(`UPDATE categories SET active=0 WHERE id=? AND NOT EXISTS (
+      SELECT 1 FROM products WHERE category_id=? AND active=1 AND is_available=1
+    )`).run(product.category_id, product.category_id);
+    logAction(db,{actorId:req.user.id,actorRole:req.user.role,action:'product.delete',targetType:'product',targetId:product.id});
+  });
   return res.status(204).end();
 });
 app.post('/api/products/import-legacy', requireAuth, allowRoles('manager','admin'), (req, res) => {
@@ -618,7 +628,7 @@ app.post('/api/orders', optionalAuth, (req, res) => {
     if(channel==='delivery')db.prepare('INSERT INTO delivery_details(order_id,address_text,landmark,notes) VALUES(?,?,?,?)')
       .run(row.id,String(body.address||'').slice(0,1000),String(body.landmark||'').slice(0,300),String(body.riderNotes||'').slice(0,500));
     if(tableId)db.prepare("UPDATE tables SET status='occupied' WHERE id=?").run(tableId);
-    logAction(db,{actorId:req.user?.id||null,actorRole:role,action:'order_create',targetType:'order',targetId:id,meta:{channel,totalCents:quote.totalCents}});
+    logAction(db,{actorId:req.user?.id||null,actorRole:role,action:'order.create',targetType:'order',targetId:id,meta:{channel,totalCents:quote.totalCents}});
   });
   publishPos('order',{id,status:order.status,total:order.total,table:order.table,channel},tableId);
   return jsonResponse(res,201,{success:true,id,orderId:id,order,lines,synced:true});
@@ -738,9 +748,9 @@ if (process.env.USE_FIREBASE === 'true') console.warn('USE_FIREBASE is ignored; 
 await ensureDemoStaffAccounts();
 await ensureSuperAdmin();
 
-app.get(['/admin', '/admin/', '/admin/login', '/admin/login/','/admin/login.html'], (_req, res) => res.redirect(308, '/staff/login.html?role=admin'));
-app.get(['/staff/login','/staff/login/'], (_req,res)=>res.redirect(308,'/staff/login.html'));
-app.get('/staff', (_req, res) => res.sendFile(path.join(webRoot, 'staff/login.html')));
+app.get(['/portal','/portal/'], (_req,res)=>res.sendFile(path.join(webRoot,'portal/index.html')));
+app.get(['/staff','/staff/','/staff/login','/staff/login/','/staff/login.html','/admin','/admin/','/admin/login','/admin/login/','/admin/login.html','/manager','/kitchen','/waiter'], (_req,res)=>res.redirect(308,'/portal'));
+app.get(['/admin/staff.html','/admin/audit.html','/admin/settings.html'], (_req,res)=>res.sendFile(path.join(webRoot,'admin/dashboard.html')));
 app.get('/employee', (_req, res) => res.redirect('/app/#pos'));
 app.get('/display', (_req, res) => res.sendFile(path.join(webRoot, 'display.html')));
 app.get(['/','/index.html','/auth.html'], (_req, res) => res.sendFile(path.join(webRoot, 'app/index.html')));
