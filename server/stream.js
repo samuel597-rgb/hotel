@@ -41,7 +41,7 @@ function presencePayload() {
   return {
     staff: db.prepare('SELECT id,name,role,last_seen AS lastSeen,last_page AS currentPage FROM staff WHERE active=1 AND last_seen>? ORDER BY name').all(since),
     customers: db.prepare('SELECT id,name,last_seen AS lastSeen,last_page AS currentPage FROM customers WHERE active=1 AND last_seen>? ORDER BY name').all(since),
-    orders: db.prepare("SELECT legacy_order_id AS id,status,channel,table_name AS table,updated_at AS updatedAt FROM orders WHERE status='preparing' ORDER BY created_at").all()
+    orders: db.prepare("SELECT legacy_order_id AS id,status,channel,table_name AS \"table\",updated_at AS updatedAt FROM orders WHERE status='preparing' ORDER BY created_at").all()
   };
 }
 
@@ -57,8 +57,12 @@ router.get('/api/stream', (req, res) => {
   res.write(`event: ready\ndata: ${JSON.stringify({ scope })}\n\n`);
   subscribe(scope, res);
   const ping = setInterval(() => {
-    if (scope === 'presence') res.write(`event: presence\ndata: ${JSON.stringify(presencePayload())}\n\n`);
-    else res.write(`event: ping\ndata: ${Date.now()}\n\n`);
+    try {
+      if (scope === 'presence') res.write(`event: presence\ndata: ${JSON.stringify(presencePayload())}\n\n`);
+      else res.write(`event: ping\ndata: ${Date.now()}\n\n`);
+    } catch (err) {
+      console.error('[stream] presencePayload failed:', err && err.message);
+    }
   }, scope === 'presence' ? 15000 : 20000);
   const cleanup = () => { clearInterval(ping); unsubscribe(scope, res); };
   req.on('close', cleanup);

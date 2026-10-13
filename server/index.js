@@ -23,6 +23,16 @@ import { logAction } from './audit.js';
 import { toCents, fromCents } from './money.js';
 import { publish } from './events.js';
 
+// Defensive: log and keep the process alive. Render restarts the
+// container on exit, which wipes the SQLite DB and every session.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && err.stack || err);
+  // Do not process.exit
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason && reason.stack || reason);
+});
+
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -238,7 +248,14 @@ app.post(['/api/request-password-reset', '/api/complete-password-reset'], (_req,
   jsonResponse(res, 501, { error: 'Email password reset is not available in the local SQLite demo.' }));
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', database: 'sqlite' }));
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: 'sqlite' }));
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    uptime: process.uptime(),
+    pid: process.pid,
+    ts: Date.now(),
+  });
+});
 app.get('/runtime-config.json', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   return res.json({ database: 'sqlite', apiBaseUrl: process.env.PUBLIC_API_URL || '' });
@@ -399,7 +416,13 @@ app.get(['/api/stream','/api/pos/stream'], (req, res) => {
   res.flushHeaders?.();
   liveClients.set(res,table.id);
   res.write(`event: snapshot\ndata: ${JSON.stringify({ table:`${table.floor} ${table.number}`, items:[] })}\n\n`);
-  const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), 20000);
+  const keepAlive = setInterval(() => {
+    try {
+      res.write(': keep-alive\n\n');
+    } catch (err) {
+      console.error('[pos-stream] keep-alive write failed:', err && err.message);
+    }
+  }, 20000);
   req.on('close', () => { clearInterval(keepAlive); liveClients.delete(res); });
 });
 app.post('/api/pos/cart', optionalAuth, (req, res) => {
@@ -757,13 +780,22 @@ app.get(['/','/index.html','/auth.html'], (_req, res) => res.sendFile(path.join(
 app.get(['/app','/app/'], (_req, res) => res.sendFile(path.join(webRoot, 'app/index.html')));
 app.use(express.static(webRoot, { index: false, maxAge: '1h' }));
 app.use('/uploads',express.static(uploadsDir,{maxAge:'1d',immutable:true}));
-app.use((error, _req, res, _next) => {
+app.use((error, _req, res, next) => {
   console.error('Request failed:', error?.message || error);
-  if (res.headersSent) return;
+  if (res.headersSent) return next(error);
   if (error.message?.startsWith('CORS blocked origin:')) return res.status(403).json({ error: error.message });
   if (error instanceof multer.MulterError) return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'Image must be 2 MB or smaller.' : error.message });
   if (error.message?.startsWith('Only JPG')) return res.status(400).json({ error: error.message });
-  return res.status(error.status || 500).json({ error: error.status ? error.message : 'The request could not be completed.' });
+  if (error.status) return res.status(error.status).json({ error: error.message });
+  return next(error);
+});
+app.use((err, req, res, next) => {
+  console.error('[uncaught route error]', req.method, req.path, err && err.stack || err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({
+    error: 'server_error',
+    message: err && err.message ? err.message : 'Unknown error',
+  });
 });
 
 app.listen(port, () => console.log(`HOTELI POA SQLite demo listening on ${port}; database ${process.env.DB_PATH || './hoteli_poa.db'}`));
